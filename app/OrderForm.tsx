@@ -31,6 +31,8 @@ function OrderFormInner() {
   const [stockLevel, setStockLevel] = useState<StockLevel | null>(null);
   const [notes, setNotes] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [orderId, setOrderId] = useState<string | null>(null);
+  const [submittedAt, setSubmittedAt] = useState<Date | null>(null);
 
   // Load the store from the URL parameter on first render
   useEffect(() => {
@@ -92,6 +94,8 @@ function OrderFormInner() {
       },
     });
     if (result.success) {
+      setOrderId(result.order_id || null);
+      setSubmittedAt(new Date());
       setStep("done");
     } else {
       setErrorMsg(result.error || "Submission failed. Please try again.");
@@ -149,7 +153,7 @@ function OrderFormInner() {
   }
 
   if (step === "done") {
-    return <DoneView store={store!} />;
+    return <DoneView store={store!} orderId={orderId} submittedAt={submittedAt} />;
   }
 
   if (step === "error") {
@@ -435,24 +439,117 @@ function StockView({
   );
 }
 
-function DoneView({ store }: { store: StorePublicInfo }) {
+function DoneView({
+  store,
+  orderId,
+  submittedAt,
+}: {
+  store: StorePublicInfo;
+  orderId: string | null;
+  submittedAt: Date | null;
+}) {
+  // 5-second cooldown before "Order for another store" becomes clickable.
+  // Prevents accidental double-submits and gives the customer time to read.
+  const [cooldown, setCooldown] = useState(5);
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  // Order # = last 6 chars of UUID, uppercased — matches what the email shows
+  const shortId = orderId
+    ? orderId.replace(/-/g, "").slice(-6).toUpperCase()
+    : null;
+
+  const submittedLabel = submittedAt
+    ? submittedAt.toLocaleString("en-CA", {
+        dateStyle: "long",
+        timeStyle: "short",
+      })
+    : null;
+
+  const canPlaceAnother = cooldown <= 0;
+
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
-      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4 text-center">
-        <div className="text-6xl mb-3">✅</div>
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">
-          Order received!
-        </h1>
-        <div className="text-base text-gray-500 mb-5">
-          Commande reçue!
+      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4">
+        <div className="text-center mb-5">
+          <div className="text-6xl mb-3">✅</div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-1">
+            Order received!
+          </h1>
+          <div className="text-base text-gray-500">Commande reçue</div>
         </div>
-        <p className="text-gray-700 mb-4">
-          Thanks <span className="font-semibold">{store.name}</span> — your reorder request has been sent to your local depot. Your driver will contact you to schedule.
+
+        <div className="bg-gradient-to-br from-pink-50 to-teal-50 border border-gray-100 rounded-xl p-4 mb-5 text-sm">
+          <div className="space-y-2">
+            {shortId && (
+              <div className="flex justify-between items-baseline">
+                <span className="text-gray-500">Order #</span>
+                <span className="font-mono font-bold text-gray-900 tracking-wider">
+                  #{shortId}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-between items-baseline">
+              <span className="text-gray-500">Store</span>
+              <span className="font-semibold text-gray-900 text-right ml-3">
+                {store.name}
+              </span>
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className="text-gray-500">Code</span>
+              <span className="font-mono text-gray-700">
+                {store.public_code}
+              </span>
+            </div>
+            {submittedLabel && (
+              <div className="flex justify-between items-baseline">
+                <span className="text-gray-500">Submitted</span>
+                <span className="text-gray-700 text-right ml-3 text-xs">
+                  {submittedLabel}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <p className="text-gray-700 text-sm mb-2">
+          Thanks <span className="font-semibold">{store.name}</span> — your
+          driver will contact you within{" "}
+          <span className="font-semibold">1–3 business days</span> to schedule
+          delivery.
         </p>
-        <p className="text-sm text-gray-500 mb-2">
-          Merci — votre demande a été envoyée à votre dépôt local. Votre chauffeur vous contactera.
+        <p className="text-xs text-gray-500 mb-5">
+          Merci — votre chauffeur vous contactera sous 1 à 3 jours ouvrables.
         </p>
+
+        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800 mb-5">
+          <strong>📧 Confirmation email sent.</strong>{" "}
+          <span className="text-blue-600">Check your inbox / Vérifiez votre boîte de réception.</span>
+        </div>
+
+        <div className="space-y-3">
+          <button
+            onClick={() => {
+              window.location.href = "/";
+            }}
+            disabled={!canPlaceAnother}
+            className="w-full bg-brand-pink text-white font-semibold py-3.5 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition"
+          >
+            {canPlaceAnother
+              ? "Order for another store / Commander pour un autre magasin"
+              : `Wait ${cooldown}s… / Attendez ${cooldown}s…`}
+          </button>
+          <a
+            href="https://minimelts.ca"
+            className="block w-full bg-gray-100 text-gray-700 font-semibold py-3.5 rounded-xl hover:bg-gray-200 transition text-center"
+          >
+            Visit minimelts.ca →
+          </a>
+        </div>
       </div>
       <Footer />
     </div>
