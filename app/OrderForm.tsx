@@ -516,15 +516,30 @@ function DoneView({
           </div>
         </div>
 
-        <p className="text-gray-700 text-sm mb-2">
-          Thanks <span className="font-semibold">{store.name}</span> — your
-          driver will contact you within{" "}
-          <span className="font-semibold">1–3 business days</span> to schedule
-          delivery.
-        </p>
-        <p className="text-xs text-gray-500 mb-5">
-          Merci — votre chauffeur vous contactera sous 1 à 3 jours ouvrables.
-        </p>
+        <div className="bg-gray-50 border border-gray-100 rounded-lg p-4 mb-4">
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+            What happens next
+          </div>
+          <p className="text-gray-700 text-sm leading-relaxed">
+            Thanks <span className="font-semibold">{store.name}</span> — our team
+            will schedule your delivery and the driver should arrive within the
+            next <span className="font-semibold">2 weeks</span>. For urgent
+            orders we will do our best to schedule your delivery as soon as
+            possible.
+          </p>
+        </div>
+
+        <div className="bg-gray-50 border border-gray-100 rounded-lg p-4 mb-5">
+          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+            Prochaines étapes
+          </div>
+          <p className="text-gray-700 text-sm leading-relaxed">
+            Merci — notre équipe planifiera votre livraison et le chauffeur
+            devrait arriver dans les <span className="font-semibold">2 prochaines semaines</span>.
+            Pour les commandes urgentes, nous ferons de notre mieux pour
+            planifier votre livraison dès que possible.
+          </p>
+        </div>
 
         <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800 mb-5">
           <strong>📧 Confirmation email sent.</strong>{" "}
