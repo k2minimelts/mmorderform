@@ -57,8 +57,8 @@ export async function submitOrder(input: {
   submitted_by_phone: string | null;
   submitted_by_email: string | null;
   raw_form_payload: Record<string, unknown>;
-}): Promise<{ success: boolean; error?: string }> {
-  const { error } = await getSupabase()
+}): Promise<{ success: boolean; order_id?: string; error?: string }> {
+  const { data, error } = await getSupabase()
     .from("orders")
     .insert({
       store_id: input.store_id,
@@ -70,10 +70,12 @@ export async function submitOrder(input: {
       submitted_by_email: input.submitted_by_email,
       raw_form_payload: input.raw_form_payload,
       status: "pending",
-    });
+    })
+    .select("id")
+    .single();
 
   if (error) {
     return { success: false, error: error.message };
   }
-  return { success: true };
+  return { success: true, order_id: data?.id };
 }
