@@ -58,9 +58,22 @@ export async function submitOrder(input: {
   submitted_by_email: string | null;
   raw_form_payload: Record<string, unknown>;
 }): Promise<{ success: boolean; order_id?: string; error?: string }> {
-  const { data, error } = await getSupabase()
+  // Generate the order ID client-side. This avoids needing SELECT permission
+  // on the orders table for the anon role (which would be a security weakening).
+  // crypto.randomUUID() is supported in all modern browsers + Node 19+.
+  const orderId = typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : // Fallback for very old browsers — generates a UUIDv4-shaped string
+      "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === "x" ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      });
+
+  const { error } = await getSupabase()
     .from("orders")
     .insert({
+      id: orderId,
       store_id: input.store_id,
       source: "online",
       stock_level: input.stock_level,
@@ -70,12 +83,10 @@ export async function submitOrder(input: {
       submitted_by_email: input.submitted_by_email,
       raw_form_payload: input.raw_form_payload,
       status: "pending",
-    })
-    .select("id")
-    .single();
+    });
 
   if (error) {
     return { success: false, error: error.message };
   }
-  return { success: true, order_id: data?.id };
+  return { success: true, order_id: orderId };
 }
