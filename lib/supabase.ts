@@ -32,6 +32,17 @@ export type StorePublicInfo = {
   active: boolean;
 };
 
+// Minimal projection returned by the email-based lookup. Intentionally does NOT
+// include phone/email/full address — that info is fetched only after the customer
+// confirms a specific store via lookupStoreByCode().
+export type StoreLookupResult = {
+  id: string;
+  public_code: string;
+  name: string;
+  ship_city: string | null;
+  province: string | null;
+};
+
 export type StockLevel = "empty" | "almost_empty" | "half" | "three_quarter";
 
 export async function lookupStoreByCode(code: string): Promise<StorePublicInfo | null> {
@@ -49,6 +60,23 @@ export async function lookupStoreByCode(code: string): Promise<StorePublicInfo |
   return data as StorePublicInfo | null;
 }
 
+// Look up active stores by their primary contact email (case-insensitive).
+// Backed by the public.lookup_stores_by_email() SQL function which is anon-callable
+// and returns only safe-to-expose fields. Returns [] for no match or on error.
+export async function lookupStoresByEmail(email: string): Promise<StoreLookupResult[]> {
+  const trimmed = email.trim();
+  if (!trimmed) return [];
+
+  const { data, error } = await getSupabase()
+    .rpc("lookup_stores_by_email", { p_email: trimmed });
+
+  if (error) {
+    console.error("Email lookup error:", error);
+    return [];
+  }
+  return (data as StoreLookupResult[]) || [];
+}
+
 export async function submitOrder(input: {
   store_id: string;
   stock_level: StockLevel;
@@ -63,7 +91,7 @@ export async function submitOrder(input: {
   // crypto.randomUUID() is supported in all modern browsers + Node 19+.
   const orderId = typeof crypto !== "undefined" && crypto.randomUUID
     ? crypto.randomUUID()
-    : // Fallback for very old browsers â€” generates a UUIDv4-shaped string
+    : // Fallback for very old browsers — generates a UUIDv4-shaped string
       "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
         const r = (Math.random() * 16) | 0;
         const v = c === "x" ? r : (r & 0x3) | 0x8;
