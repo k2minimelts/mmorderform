@@ -514,42 +514,7 @@ function EmailPickerView(props: EmailPickerViewProps) {
 }
 
 function NotACustomerView(props: NotACustomerViewProps) {
-  const { onBack } = props;
-  return (
-    <div className="max-w-md mx-auto px-4">
-      <Brand />
-      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4 text-center">
-        <div className="text-5xl mb-4">🤝</div>
-        <h1 className="text-xl font-bold text-gray-900 mb-2">
-          We couldn&apos;t find that email
-        </h1>
-        <div className="text-sm text-gray-500 mb-5">
-          Adresse courriel introuvable
-        </div>
-        <p className="text-sm text-gray-700 mb-2 leading-relaxed">
-          If you&apos;re not currently a Mini Melts customer, please visit our website to learn more.
-        </p>
-        <p className="text-sm text-gray-500 mb-6 leading-relaxed">
-          Si vous n&apos;êtes pas encore client Mini Melts, visitez notre site web pour en savoir plus.
-        </p>
-
-        
-          href="https://minimelts.ca"
-          className="block w-full bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 transition"
-        >
-          Visit minimelts.ca →
-        </a>
-
-        <button
-          onClick={onBack}
-          className="w-full mt-3 bg-gray-100 text-gray-700 font-semibold py-3 rounded-xl hover:bg-gray-200 transition"
-        >
-          ← Try a different email / Essayer un autre courriel
-        </button>
-      </div>
-      <Footer />
-    </div>
-  );
+  return <div>Not a customer placeholder. onBack: {String(!!props.onBack)}</div>;
 }
 
 function ConfirmView(props: ConfirmViewProps) {
