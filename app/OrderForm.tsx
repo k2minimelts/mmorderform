@@ -10,6 +10,11 @@ import {
   StoreLookupResult,
   StockLevel,
 } from "@/lib/supabase";
+import {
+  EmailLookupView,
+  EmailPickerView,
+  NotACustomerView,
+} from "./EmailLookupViews";
 
 type Step =
   | "loading"
@@ -24,10 +29,10 @@ type Step =
   | "error";
 
 const STOCK_OPTIONS: { value: StockLevel; en: string; fr: string; icon: string }[] = [
-  { value: "empty", en: "Empty", fr: "Vide", icon: "📭" },
-  { value: "almost_empty", en: "Almost empty", fr: "Presque vide", icon: "📦" },
-  { value: "half", en: "Half full", fr: "Moitié pleine", icon: "🗄️" },
-  { value: "three_quarter", en: "3/4 full", fr: "3/4 pleine", icon: "🗃️" },
+  { value: "empty", en: "Empty", fr: "Vide", icon: "\u{1F4ED}" },
+  { value: "almost_empty", en: "Almost empty", fr: "Presque vide", icon: "\u{1F4E6}" },
+  { value: "half", en: "Half full", fr: "Moiti\u00E9 pleine", icon: "\u{1F5C4}\u{FE0F}" },
+  { value: "three_quarter", en: "3/4 full", fr: "3/4 pleine", icon: "\u{1F5C3}\u{FE0F}" },
 ];
 
 function OrderFormInner() {
@@ -46,16 +51,21 @@ function OrderFormInner() {
   const [stockLevel, setStockLevel] = useState<StockLevel | null>(null);
   const [notes, setNotes] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
-  const [orderId, setOrderId] = useState<string | null>(null);
-  const [submittedAt, setSubmittedAt] = useState<Date | null>(null);
 
-  // Load the store from the URL parameter on first render
+  function applyStoreToForm(result: StorePublicInfo) {
+    setStore(result);
+    const name = [result.first_name, result.last_name].filter(Boolean).join(" ");
+    setContactName(name);
+    setContactPhone(result.phone || "");
+    setContactEmail(result.email || "");
+  }
+
   useEffect(() => {
     if (codeParam) {
       (async () => {
         const result = await lookupStoreByCode(codeParam);
         if (result) {
-          loadStoreIntoForm(result);
+          applyStoreToForm(result);
           setStep("confirm");
         } else {
           setCodeInput(codeParam);
@@ -68,15 +78,6 @@ function OrderFormInner() {
     }
   }, [codeParam]);
 
-  // Helper: prefill contact fields from a fetched StorePublicInfo
-  function loadStoreIntoForm(result: StorePublicInfo) {
-    setStore(result);
-    const name = [result.first_name, result.last_name].filter(Boolean).join(" ");
-    setContactName(name);
-    setContactPhone(result.phone || "");
-    setContactEmail(result.email || "");
-  }
-
   async function handleManualLookup() {
     setErrorMsg("");
     const trimmed = codeInput.trim().toUpperCase();
@@ -84,7 +85,7 @@ function OrderFormInner() {
     setStep("loading");
     const result = await lookupStoreByCode(trimmed);
     if (result) {
-      loadStoreIntoForm(result);
+      applyStoreToForm(result);
       setStep("confirm");
     } else {
       setErrorMsg("Code not found. Please check your sticker / Code introuvable.");
@@ -96,9 +97,8 @@ function OrderFormInner() {
     setEmailLookupError("");
     const trimmed = emailInput.trim();
     if (!trimmed) return;
-    // Light client-side email format check; the SQL function does case/trim handling
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
-      setEmailLookupError("Please enter a valid email address. / Adresse courriel invalide.");
+      setEmailLookupError("Please enter a valid email address.");
       return;
     }
     setStep("loading");
@@ -108,20 +108,16 @@ function OrderFormInner() {
       return;
     }
     if (matches.length === 1) {
-      // Single match — auto-load straight into the confirm step
       const full = await lookupStoreByCode(matches[0].public_code);
       if (full) {
-        loadStoreIntoForm(full);
+        applyStoreToForm(full);
         setStep("confirm");
       } else {
-        // Extremely unlikely (would mean email-lookup found a store that
-        // code-lookup can't see), but handle gracefully
-        setErrorMsg("Could not load store details. Please try again.");
+        setErrorMsg("Could not load store details.");
         setStep("error");
       }
       return;
     }
-    // Multiple matches — show picker
     setEmailMatches(matches);
     setStep("email_picker");
   }
@@ -130,10 +126,10 @@ function OrderFormInner() {
     setStep("loading");
     const full = await lookupStoreByCode(match.public_code);
     if (full) {
-      loadStoreIntoForm(full);
+      applyStoreToForm(full);
       setStep("confirm");
     } else {
-      setErrorMsg("Could not load store details. Please try again.");
+      setErrorMsg("Could not load store details.");
       setStep("error");
     }
   }
@@ -155,16 +151,12 @@ function OrderFormInner() {
       },
     });
     if (result.success) {
-      setOrderId(result.order_id || null);
-      setSubmittedAt(new Date());
       setStep("done");
     } else {
       setErrorMsg(result.error || "Submission failed. Please try again.");
       setStep("error");
     }
   }
-
-  // ============ RENDER ============
 
   if (step === "loading") {
     return <LoadingView />;
@@ -188,34 +180,44 @@ function OrderFormInner() {
 
   if (step === "email_lookup") {
     return (
-      <EmailLookupView
-        emailInput={emailInput}
-        setEmailInput={setEmailInput}
-        onSubmit={handleEmailLookup}
-        onBack={() => {
-          setEmailLookupError("");
-          setStep("lookup");
-        }}
-        errorMsg={emailLookupError}
-      />
+      <div className="max-w-md mx-auto px-4">
+        <Brand />
+        <EmailLookupView
+          emailInput={emailInput}
+          setEmailInput={setEmailInput}
+          onSubmit={handleEmailLookup}
+          onBack={() => {
+            setEmailLookupError("");
+            setStep("lookup");
+          }}
+          errorMsg={emailLookupError}
+        />
+        <Footer />
+      </div>
     );
   }
 
   if (step === "email_picker") {
     return (
-      <EmailPickerView
-        matches={emailMatches}
-        onPick={handlePickFromMatches}
-        onBack={() => setStep("email_lookup")}
-      />
+      <div className="max-w-md mx-auto px-4">
+        <Brand />
+        <EmailPickerView
+          matches={emailMatches}
+          onPick={handlePickFromMatches}
+          onBack={() => setStep("email_lookup")}
+        />
+        <Footer />
+      </div>
     );
   }
 
   if (step === "not_a_customer") {
     return (
-      <NotACustomerView
-        onBack={() => setStep("email_lookup")}
-      />
+      <div className="max-w-md mx-auto px-4">
+        <Brand />
+        <NotACustomerView onBack={() => setStep("email_lookup")} />
+        <Footer />
+      </div>
     );
   }
 
@@ -248,11 +250,11 @@ function OrderFormInner() {
   }
 
   if (step === "submitting") {
-    return <LoadingView label="Sending order / Envoi en cours…" />;
+    return <LoadingView label="Sending order / Envoi en cours\u2026" />;
   }
 
   if (step === "done") {
-    return <DoneView store={store!} orderId={orderId} submittedAt={submittedAt} />;
+    return <DoneView store={store!} />;
   }
 
   if (step === "error") {
@@ -267,71 +269,6 @@ function OrderFormInner() {
   return null;
 }
 
-// =================================================================
-// VIEW PROP TYPES
-// =================================================================
-
-type LookupViewProps = {
-  codeInput: string;
-  setCodeInput: (v: string) => void;
-  onSubmit: () => void;
-  onSwitchToEmail: () => void;
-  errorMsg: string;
-};
-
-type EmailLookupViewProps = {
-  emailInput: string;
-  setEmailInput: (v: string) => void;
-  onSubmit: () => void;
-  onBack: () => void;
-  errorMsg: string;
-};
-
-type EmailPickerViewProps = {
-  matches: StoreLookupResult[];
-  onPick: (match: StoreLookupResult) => void;
-  onBack: () => void;
-};
-
-type NotACustomerViewProps = {
-  onBack: () => void;
-};
-
-type ConfirmViewProps = {
-  store: StorePublicInfo;
-  contactName: string;
-  contactPhone: string;
-  contactEmail: string;
-  setContactName: (v: string) => void;
-  setContactPhone: (v: string) => void;
-  setContactEmail: (v: string) => void;
-  onNext: () => void;
-};
-
-type StockViewProps = {
-  stockLevel: StockLevel | null;
-  setStockLevel: (s: StockLevel) => void;
-  notes: string;
-  setNotes: (v: string) => void;
-  onBack: () => void;
-  onSubmit: () => void;
-};
-
-type DoneViewProps = {
-  store: StorePublicInfo;
-  orderId: string | null;
-  submittedAt: Date | null;
-};
-
-type ErrorViewProps = {
-  errorMsg: string;
-  onRetry: () => void;
-};
-
-// =================================================================
-// VIEWS
-// =================================================================
-
 function Brand() {
   return (
     <div className="flex flex-col items-center pt-8 pb-4">
@@ -339,13 +276,13 @@ function Brand() {
         Mini Melts
       </div>
       <div className="text-xs font-medium text-gray-500 uppercase tracking-wider mt-1">
-        Canada — Order form / Formulaire de commande
+        Canada &mdash; Order form / Formulaire de commande
       </div>
     </div>
   );
 }
 
-function LoadingView({ label = "Loading / Chargement…" }: { label?: string }) {
+function LoadingView({ label = "Loading / Chargement\u2026" }: { label?: string }) {
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
@@ -356,6 +293,14 @@ function LoadingView({ label = "Loading / Chargement…" }: { label?: string }) 
     </div>
   );
 }
+
+type LookupViewProps = {
+  codeInput: string;
+  setCodeInput: (v: string) => void;
+  onSubmit: () => void;
+  onSwitchToEmail: () => void;
+  errorMsg: string;
+};
 
 function LookupView(props: LookupViewProps) {
   const { codeInput, setCodeInput, onSubmit, onSwitchToEmail, errorMsg } = props;
@@ -371,7 +316,7 @@ function LookupView(props: LookupViewProps) {
         </div>
         <p className="text-sm text-gray-600 mb-6">
           Your code looks like <span className="font-mono font-bold">ST-1234</span> and is on the sticker on your freezer. <br />
-          <span className="text-gray-500">Le code se trouve sur l&apos;autocollant du congélateur.</span>
+          <span className="text-gray-500">Le code se trouve sur l&apos;autocollant du cong&eacute;lateur.</span>
         </p>
         <input
           type="text"
@@ -390,7 +335,7 @@ function LookupView(props: LookupViewProps) {
           disabled={!codeInput.trim()}
           className="w-full mt-6 bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition"
         >
-          Continue / Continuer →
+          Continue / Continuer &rarr;
         </button>
         <div className="mt-5 pt-5 border-t border-gray-100 text-center">
           <button
@@ -398,7 +343,7 @@ function LookupView(props: LookupViewProps) {
             onClick={onSwitchToEmail}
             className="text-sm font-semibold text-brand-tealDark hover:underline"
           >
-            Don&apos;t have your store code? Look it up by email →
+            Don&apos;t have your store code? Look it up by email &rarr;
           </button>
           <div className="text-xs text-gray-500 mt-1">
             Vous n&apos;avez pas votre code? Recherchez par courriel
@@ -410,112 +355,16 @@ function LookupView(props: LookupViewProps) {
   );
 }
 
-function EmailLookupView(props: EmailLookupViewProps) {
-  const { emailInput, setEmailInput, onSubmit, onBack, errorMsg } = props;
-  return (
-    <div className="max-w-md mx-auto px-4">
-      <Brand />
-      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4">
-        <h1 className="text-xl font-bold text-gray-900 mb-1">
-          Look up your store
-        </h1>
-        <div className="text-sm text-gray-500 mb-4">
-          Recherchez votre magasin
-        </div>
-        <p className="text-sm text-gray-600 mb-6">
-          Enter the email address we have on file and we&apos;ll find your store. <br />
-          <span className="text-gray-500">Entrez l&apos;adresse courriel enregistrée pour trouver votre magasin.</span>
-        </p>
-        <input
-          type="email"
-          inputMode="email"
-          autoComplete="email"
-          placeholder="you@example.com"
-          value={emailInput}
-          onChange={(e) => setEmailInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") onSubmit(); }}
-          autoFocus
-          className="w-full text-base border-2 border-gray-200 rounded-xl px-4 py-4 focus:outline-none focus:border-brand-pink transition"
-        />
-        {errorMsg && (
-          <div className="mt-3 text-sm text-red-600 text-center">{errorMsg}</div>
-        )}
-        <div className="flex gap-3 mt-6">
-          <button
-            onClick={onBack}
-            className="flex-none bg-gray-100 text-gray-700 font-semibold px-5 py-4 rounded-xl hover:bg-gray-200 transition"
-          >
-            ← Back
-          </button>
-          <button
-            onClick={onSubmit}
-            disabled={!emailInput.trim()}
-            className="flex-1 bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition"
-          >
-            Look up / Rechercher →
-          </button>
-        </div>
-      </div>
-      <Footer />
-    </div>
-  );
-}
-
-function EmailPickerView(props: EmailPickerViewProps) {
-  const { matches, onPick, onBack } = props;
-  return (
-    <div className="max-w-md mx-auto px-4">
-      <Brand />
-      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4">
-        <h1 className="text-xl font-bold text-gray-900 mb-1">
-          We found {matches.length} stores
-        </h1>
-        <div className="text-sm text-gray-500 mb-4">
-          {matches.length} magasins trouvés
-        </div>
-        <p className="text-sm text-gray-600 mb-5">
-          Pick the store you want to place an order for. <br />
-          <span className="text-gray-500">Choisissez le magasin pour lequel vous souhaitez commander.</span>
-        </p>
-
-        <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-          {matches.map((m) => {
-            const cityProv = [m.ship_city, m.province].filter(Boolean).join(", ");
-            return (
-              <button
-                key={m.id}
-                onClick={() => onPick(m)}
-                className="w-full text-left border-2 border-gray-200 hover:border-brand-pink hover:bg-pink-50 rounded-xl p-3 transition"
-              >
-                <div className="text-xs text-gray-500 font-mono font-bold mb-0.5">
-                  {m.public_code}
-                </div>
-                <div className="font-semibold text-gray-900 text-sm leading-tight">
-                  {m.name}
-                </div>
-                {cityProv && (
-                  <div className="text-xs text-gray-500 mt-0.5">{cityProv}</div>
-                )}
-              </button>
-            );
-          })}
-        </div>
-
-        <button
-          onClick={onBack}
-          className="w-full mt-5 bg-gray-100 text-gray-700 font-semibold py-3 rounded-xl hover:bg-gray-200 transition"
-        >
-          ← Back / Retour
-        </button>
-      </div>
-      <Footer />
-    </div>
-  );
-}
-
-function NotACustomerView(props: NotACustomerViewProps) {
-  return <div>Not a customer placeholder. onBack: {String(!!props.onBack)}</div>;
-}
+type ConfirmViewProps = {
+  store: StorePublicInfo;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+  setContactName: (v: string) => void;
+  setContactPhone: (v: string) => void;
+  setContactEmail: (v: string) => void;
+  onNext: () => void;
+};
 
 function ConfirmView(props: ConfirmViewProps) {
   const {
@@ -529,13 +378,13 @@ function ConfirmView(props: ConfirmViewProps) {
     onNext,
   } = props;
   const cityProv = [store.ship_city, store.province].filter(Boolean).join(", ");
-  const canContinue = contactName.trim().length > 0 && (contactPhone.trim() || contactEmail.trim());
+  const canContinue = contactName.trim().length > 0 && (contactPhone.trim() !== "" || contactEmail.trim() !== "");
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
       <div className="bg-white rounded-2xl shadow-sm p-6 mt-4">
         <div className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-2">
-          Step 1 of 2 / Étape 1 de 2
+          Step 1 of 2 / &Eacute;tape 1 de 2
         </div>
         <h1 className="text-xl font-bold text-gray-900 mb-4">
           Is this your store? / Est-ce votre magasin?
@@ -571,7 +420,7 @@ function ConfirmView(props: ConfirmViewProps) {
           </div>
           <div>
             <label className="block text-sm font-semibold text-gray-700 mb-1.5">
-              Phone / Téléphone
+              Phone / T&eacute;l&eacute;phone
             </label>
             <input
               type="tel"
@@ -594,8 +443,8 @@ function ConfirmView(props: ConfirmViewProps) {
             />
           </div>
           <p className="text-xs text-gray-500">
-            Phone or email — at least one is required so we can reach you. <br />
-            Téléphone ou courriel — au moins un est requis.
+            Phone or email &mdash; at least one is required so we can reach you. <br />
+            T&eacute;l&eacute;phone ou courriel &mdash; au moins un est requis.
           </p>
         </div>
 
@@ -604,13 +453,22 @@ function ConfirmView(props: ConfirmViewProps) {
           disabled={!canContinue}
           className="w-full mt-6 bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition"
         >
-          Continue / Continuer →
+          Continue / Continuer &rarr;
         </button>
       </div>
       <Footer />
     </div>
   );
 }
+
+type StockViewProps = {
+  stockLevel: StockLevel | null;
+  setStockLevel: (s: StockLevel) => void;
+  notes: string;
+  setNotes: (v: string) => void;
+  onBack: () => void;
+  onSubmit: () => void;
+};
 
 function StockView(props: StockViewProps) {
   const { stockLevel, setStockLevel, notes, setNotes, onBack, onSubmit } = props;
@@ -619,16 +477,16 @@ function StockView(props: StockViewProps) {
       <Brand />
       <div className="bg-white rounded-2xl shadow-sm p-6 mt-4">
         <div className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-2">
-          Step 2 of 2 / Étape 2 de 2
+          Step 2 of 2 / &Eacute;tape 2 de 2
         </div>
         <h1 className="text-xl font-bold text-gray-900 mb-1">
           How full is your freezer?
         </h1>
         <div className="text-sm text-gray-500 mb-4">
-          Quel est le niveau de votre congélateur?
+          Quel est le niveau de votre cong&eacute;lateur?
         </div>
         <p className="text-xs text-gray-500 mb-5">
-          Minimum order: 180 cups / Commande minimum : 180 unités
+          Minimum order: 180 cups / Commande minimum : 180 unit&eacute;s
         </p>
 
         <div className="grid grid-cols-2 gap-3 mb-5">
@@ -638,16 +496,15 @@ function StockView(props: StockViewProps) {
               <button
                 key={opt.value}
                 onClick={() => setStockLevel(opt.value)}
-                className={`rounded-xl p-4 border-2 transition text-left ${
-                  selected
+                className={
+                  "rounded-xl p-4 border-2 transition text-left " +
+                  (selected
                     ? "border-brand-pink bg-pink-50"
-                    : "border-gray-200 bg-white hover:border-gray-300"
-                }`}
+                    : "border-gray-200 bg-white hover:border-gray-300")
+                }
               >
                 <div className="text-3xl mb-2">{opt.icon}</div>
-                <div className="font-semibold text-gray-900 text-sm">
-                  {opt.en}
-                </div>
+                <div className="font-semibold text-gray-900 text-sm">{opt.en}</div>
                 <div className="text-xs text-gray-500">{opt.fr}</div>
               </button>
             );
@@ -663,7 +520,7 @@ function StockView(props: StockViewProps) {
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
             className="w-full border-2 border-gray-200 rounded-lg px-3 py-3 focus:outline-none focus:border-brand-teal transition resize-none"
-            placeholder="e.g., Out of cotton candy / Plus de barbe à papa"
+            placeholder="e.g., Out of cotton candy / Plus de barbe a papa"
           />
         </div>
 
@@ -672,14 +529,14 @@ function StockView(props: StockViewProps) {
             onClick={onBack}
             className="flex-none bg-gray-100 text-gray-700 font-semibold px-5 py-4 rounded-xl hover:bg-gray-200 transition"
           >
-            ← Back
+            &larr; Back
           </button>
           <button
             onClick={onSubmit}
             disabled={!stockLevel}
             className="flex-1 bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition"
           >
-            Place order / Commander →
+            Place order / Commander &rarr;
           </button>
         </div>
       </div>
@@ -688,130 +545,39 @@ function StockView(props: StockViewProps) {
   );
 }
 
+type DoneViewProps = {
+  store: StorePublicInfo;
+};
+
 function DoneView(props: DoneViewProps) {
-  const { store, orderId, submittedAt } = props;
-  // 5-second cooldown before "Order for another store" becomes clickable.
-  // Prevents accidental double-submits and gives the customer time to read.
-  const [cooldown, setCooldown] = useState(5);
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [cooldown]);
-
-  // Order # = last 6 chars of UUID, uppercased — matches what the email shows
-  const shortId = orderId
-    ? orderId.replace(/-/g, "").slice(-6).toUpperCase()
-    : null;
-
-  const submittedLabel = submittedAt
-    ? submittedAt.toLocaleString("en-CA", {
-        dateStyle: "long",
-        timeStyle: "short",
-      })
-    : null;
-
-  const canPlaceAnother = cooldown <= 0;
-
+  const { store } = props;
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
-      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4">
-        <div className="text-center mb-5">
-          <div className="text-6xl mb-3">✅</div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-1">
-            Order received!
-          </h1>
-          <div className="text-base text-gray-500">Commande reçue</div>
+      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4 text-center">
+        <div className="text-6xl mb-3">{"\u2705"}</div>
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">
+          Order received!
+        </h1>
+        <div className="text-base text-gray-500 mb-5">
+          Commande re&ccedil;ue!
         </div>
-
-        <div className="bg-gradient-to-br from-pink-50 to-teal-50 border border-gray-100 rounded-xl p-4 mb-5 text-sm">
-          <div className="space-y-2">
-            {shortId && (
-              <div className="flex justify-between items-baseline">
-                <span className="text-gray-500">Order #</span>
-                <span className="font-mono font-bold text-gray-900 tracking-wider">
-                  #{shortId}
-                </span>
-              </div>
-            )}
-            <div className="flex justify-between items-baseline">
-              <span className="text-gray-500">Store</span>
-              <span className="font-semibold text-gray-900 text-right ml-3">
-                {store.name}
-              </span>
-            </div>
-            <div className="flex justify-between items-baseline">
-              <span className="text-gray-500">Code</span>
-              <span className="font-mono text-gray-700">
-                {store.public_code}
-              </span>
-            </div>
-            {submittedLabel && (
-              <div className="flex justify-between items-baseline">
-                <span className="text-gray-500">Submitted</span>
-                <span className="text-gray-700 text-right ml-3 text-xs">
-                  {submittedLabel}
-                </span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="bg-gray-50 border border-gray-100 rounded-lg p-4 mb-4">
-          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            What happens next
-          </div>
-          <p className="text-gray-700 text-sm leading-relaxed">
-            Thanks <span className="font-semibold">{store.name}</span> — our team
-            will schedule your delivery and the driver should arrive within the
-            next <span className="font-semibold">2 weeks</span>. For urgent
-            orders we will do our best to schedule your delivery as soon as
-            possible.
-          </p>
-        </div>
-
-        <div className="bg-gray-50 border border-gray-100 rounded-lg p-4 mb-5">
-          <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-            Prochaines étapes
-          </div>
-          <p className="text-gray-700 text-sm leading-relaxed">
-            Merci — notre équipe planifiera votre livraison et le chauffeur
-            devrait arriver dans les <span className="font-semibold">2 prochaines semaines</span>.
-            Pour les commandes urgentes, nous ferons de notre mieux pour
-            planifier votre livraison dès que possible.
-          </p>
-        </div>
-
-        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-800 mb-5">
-          <strong>📧 Confirmation email sent.</strong>{" "}
-          <span className="text-blue-600">Check your inbox / Vérifiez votre boîte de réception.</span>
-        </div>
-
-        <div className="space-y-3">
-          <button
-            onClick={() => {
-              window.location.href = "/";
-            }}
-            disabled={!canPlaceAnother}
-            className="w-full bg-brand-pink text-white font-semibold py-3.5 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition"
-          >
-            {canPlaceAnother
-              ? "Order for another store / Commander pour un autre magasin"
-              : `Wait ${cooldown}s… / Attendez ${cooldown}s…`}
-          </button>
-          
-            href="https://minimelts.ca"
-            className="block w-full bg-gray-100 text-gray-700 font-semibold py-3.5 rounded-xl hover:bg-gray-200 transition text-center"
-          >
-            Visit minimelts.ca →
-          </a>
-        </div>
+        <p className="text-gray-700 mb-4">
+          Thanks <span className="font-semibold">{store.name}</span> &mdash; your reorder request has been sent to your local depot. Your driver will contact you to schedule.
+        </p>
+        <p className="text-sm text-gray-500 mb-2">
+          Merci &mdash; votre demande a &eacute;t&eacute; envoy&eacute;e &agrave; votre d&eacute;p&ocirc;t local. Votre chauffeur vous contactera.
+        </p>
       </div>
       <Footer />
     </div>
   );
 }
+
+type ErrorViewProps = {
+  errorMsg: string;
+  onRetry: () => void;
+};
 
 function ErrorView(props: ErrorViewProps) {
   const { errorMsg, onRetry } = props;
@@ -819,7 +585,7 @@ function ErrorView(props: ErrorViewProps) {
     <div className="max-w-md mx-auto px-4">
       <Brand />
       <div className="bg-white rounded-2xl shadow-sm p-6 mt-4 text-center">
-        <div className="text-5xl mb-3">⚠️</div>
+        <div className="text-5xl mb-3">{"\u26A0\uFE0F"}</div>
         <h1 className="text-xl font-bold text-gray-900 mb-2">
           Something went wrong
         </h1>
@@ -828,7 +594,7 @@ function ErrorView(props: ErrorViewProps) {
           onClick={onRetry}
           className="w-full bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 transition"
         >
-          Try again / Réessayer
+          Try again / R&eacute;essayer
         </button>
       </div>
       <Footer />
@@ -839,7 +605,7 @@ function ErrorView(props: ErrorViewProps) {
 function Footer() {
   return (
     <div className="text-center text-xs text-gray-400 py-6">
-      minimelts.ca · Need help? Call your depot.
+      minimelts.ca &middot; Need help? Call your depot.
     </div>
   );
 }
