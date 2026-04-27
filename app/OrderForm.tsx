@@ -4,12 +4,24 @@ import { useEffect, useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   lookupStoreByCode,
+  lookupStoresByEmail,
   submitOrder,
   StorePublicInfo,
+  StoreLookupResult,
   StockLevel,
 } from "@/lib/supabase";
 
-type Step = "loading" | "lookup" | "confirm" | "stock" | "submitting" | "done" | "error";
+type Step =
+  | "loading"
+  | "lookup"
+  | "email_lookup"
+  | "email_picker"
+  | "not_a_customer"
+  | "confirm"
+  | "stock"
+  | "submitting"
+  | "done"
+  | "error";
 
 const STOCK_OPTIONS: { value: StockLevel; en: string; fr: string; icon: string }[] = [
   { value: "empty", en: "Empty", fr: "Vide", icon: "📭" },
@@ -24,6 +36,9 @@ function OrderFormInner() {
 
   const [step, setStep] = useState<Step>("loading");
   const [codeInput, setCodeInput] = useState("");
+  const [emailInput, setEmailInput] = useState("");
+  const [emailMatches, setEmailMatches] = useState<StoreLookupResult[]>([]);
+  const [emailLookupError, setEmailLookupError] = useState("");
   const [store, setStore] = useState<StorePublicInfo | null>(null);
   const [contactName, setContactName] = useState("");
   const [contactPhone, setContactPhone] = useState("");
@@ -40,12 +55,7 @@ function OrderFormInner() {
       (async () => {
         const result = await lookupStoreByCode(codeParam);
         if (result) {
-          setStore(result);
-          // Prefill contact fields if we have them
-          const name = [result.first_name, result.last_name].filter(Boolean).join(" ");
-          setContactName(name);
-          setContactPhone(result.phone || "");
-          setContactEmail(result.email || "");
+          loadStoreIntoForm(result);
           setStep("confirm");
         } else {
           setCodeInput(codeParam);
@@ -58,6 +68,15 @@ function OrderFormInner() {
     }
   }, [codeParam]);
 
+  // Helper: prefill contact fields from a fetched StorePublicInfo
+  function loadStoreIntoForm(result: StorePublicInfo) {
+    setStore(result);
+    const name = [result.first_name, result.last_name].filter(Boolean).join(" ");
+    setContactName(name);
+    setContactPhone(result.phone || "");
+    setContactEmail(result.email || "");
+  }
+
   async function handleManualLookup() {
     setErrorMsg("");
     const trimmed = codeInput.trim().toUpperCase();
@@ -65,15 +84,57 @@ function OrderFormInner() {
     setStep("loading");
     const result = await lookupStoreByCode(trimmed);
     if (result) {
-      setStore(result);
-      const name = [result.first_name, result.last_name].filter(Boolean).join(" ");
-      setContactName(name);
-      setContactPhone(result.phone || "");
-      setContactEmail(result.email || "");
+      loadStoreIntoForm(result);
       setStep("confirm");
     } else {
       setErrorMsg("Code not found. Please check your sticker / Code introuvable.");
       setStep("lookup");
+    }
+  }
+
+  async function handleEmailLookup() {
+    setEmailLookupError("");
+    const trimmed = emailInput.trim();
+    if (!trimmed) return;
+    // Light client-side email format check; the SQL function does case/trim handling
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+      setEmailLookupError("Please enter a valid email address. / Adresse courriel invalide.");
+      return;
+    }
+    setStep("loading");
+    const matches = await lookupStoresByEmail(trimmed);
+    if (matches.length === 0) {
+      setStep("not_a_customer");
+      return;
+    }
+    if (matches.length === 1) {
+      // Single match — auto-load straight into the confirm step
+      const full = await lookupStoreByCode(matches[0].public_code);
+      if (full) {
+        loadStoreIntoForm(full);
+        setStep("confirm");
+      } else {
+        // Extremely unlikely (would mean email-lookup found a store that
+        // code-lookup can't see), but handle gracefully
+        setErrorMsg("Could not load store details. Please try again.");
+        setStep("error");
+      }
+      return;
+    }
+    // Multiple matches — show picker
+    setEmailMatches(matches);
+    setStep("email_picker");
+  }
+
+  async function handlePickFromMatches(match: StoreLookupResult) {
+    setStep("loading");
+    const full = await lookupStoreByCode(match.public_code);
+    if (full) {
+      loadStoreIntoForm(full);
+      setStep("confirm");
+    } else {
+      setErrorMsg("Could not load store details. Please try again.");
+      setStep("error");
     }
   }
 
@@ -115,7 +176,45 @@ function OrderFormInner() {
         codeInput={codeInput}
         setCodeInput={setCodeInput}
         onSubmit={handleManualLookup}
+        onSwitchToEmail={() => {
+          setEmailInput("");
+          setEmailLookupError("");
+          setStep("email_lookup");
+        }}
         errorMsg={errorMsg}
+      />
+    );
+  }
+
+  if (step === "email_lookup") {
+    return (
+      <EmailLookupView
+        emailInput={emailInput}
+        setEmailInput={setEmailInput}
+        onSubmit={handleEmailLookup}
+        onBack={() => {
+          setEmailLookupError("");
+          setStep("lookup");
+        }}
+        errorMsg={emailLookupError}
+      />
+    );
+  }
+
+  if (step === "email_picker") {
+    return (
+      <EmailPickerView
+        matches={emailMatches}
+        onPick={handlePickFromMatches}
+        onBack={() => setStep("email_lookup")}
+      />
+    );
+  }
+
+  if (step === "not_a_customer") {
+    return (
+      <NotACustomerView
+        onBack={() => setStep("email_lookup")}
       />
     );
   }
@@ -201,11 +300,13 @@ function LookupView({
   codeInput,
   setCodeInput,
   onSubmit,
+  onSwitchToEmail,
   errorMsg,
 }: {
   codeInput: string;
   setCodeInput: (v: string) => void;
   onSubmit: () => void;
+  onSwitchToEmail: () => void;
   errorMsg: string;
 }) {
   return (
@@ -240,6 +341,177 @@ function LookupView({
           className="w-full mt-6 bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition"
         >
           Continue / Continuer →
+        </button>
+        <div className="mt-5 pt-5 border-t border-gray-100 text-center">
+          <button
+            type="button"
+            onClick={onSwitchToEmail}
+            className="text-sm font-semibold text-brand-tealDark hover:underline"
+          >
+            Don&apos;t have your store code? Look it up by email →
+          </button>
+          <div className="text-xs text-gray-500 mt-1">
+            Vous n&apos;avez pas votre code? Recherchez par courriel
+          </div>
+        </div>
+      </div>
+      <Footer />
+    </div>
+  );
+}
+
+function EmailLookupView({
+  emailInput,
+  setEmailInput,
+  onSubmit,
+  onBack,
+  errorMsg,
+}: {
+  emailInput: string;
+  setEmailInput: (v: string) => void;
+  onSubmit: () => void;
+  onBack: () => void;
+  errorMsg: string;
+}) {
+  return (
+    <div className="max-w-md mx-auto px-4">
+      <Brand />
+      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4">
+        <h1 className="text-xl font-bold text-gray-900 mb-1">
+          Look up your store
+        </h1>
+        <div className="text-sm text-gray-500 mb-4">
+          Recherchez votre magasin
+        </div>
+        <p className="text-sm text-gray-600 mb-6">
+          Enter the email address we have on file and we&apos;ll find your store. <br />
+          <span className="text-gray-500">Entrez l&apos;adresse courriel enregistrée pour trouver votre magasin.</span>
+        </p>
+        <input
+          type="email"
+          inputMode="email"
+          autoComplete="email"
+          placeholder="you@example.com"
+          value={emailInput}
+          onChange={(e) => setEmailInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") onSubmit(); }}
+          autoFocus
+          className="w-full text-base border-2 border-gray-200 rounded-xl px-4 py-4 focus:outline-none focus:border-brand-pink transition"
+        />
+        {errorMsg && (
+          <div className="mt-3 text-sm text-red-600 text-center">{errorMsg}</div>
+        )}
+        <div className="flex gap-3 mt-6">
+          <button
+            onClick={onBack}
+            className="flex-none bg-gray-100 text-gray-700 font-semibold px-5 py-4 rounded-xl hover:bg-gray-200 transition"
+          >
+            ← Back
+          </button>
+          <button
+            onClick={onSubmit}
+            disabled={!emailInput.trim()}
+            className="flex-1 bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition"
+          >
+            Look up / Rechercher →
+          </button>
+        </div>
+      </div>
+      <Footer />
+    </div>
+  );
+}
+
+function EmailPickerView({
+  matches,
+  onPick,
+  onBack,
+}: {
+  matches: StoreLookupResult[];
+  onPick: (match: StoreLookupResult) => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="max-w-md mx-auto px-4">
+      <Brand />
+      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4">
+        <h1 className="text-xl font-bold text-gray-900 mb-1">
+          We found {matches.length} stores
+        </h1>
+        <div className="text-sm text-gray-500 mb-4">
+          {matches.length} magasins trouvés
+        </div>
+        <p className="text-sm text-gray-600 mb-5">
+          Pick the store you want to place an order for. <br />
+          <span className="text-gray-500">Choisissez le magasin pour lequel vous souhaitez commander.</span>
+        </p>
+
+        <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+          {matches.map((m) => {
+            const cityProv = [m.ship_city, m.province].filter(Boolean).join(", ");
+            return (
+              <button
+                key={m.id}
+                onClick={() => onPick(m)}
+                className="w-full text-left border-2 border-gray-200 hover:border-brand-pink hover:bg-pink-50 rounded-xl p-3 transition"
+              >
+                <div className="text-xs text-gray-500 font-mono font-bold mb-0.5">
+                  {m.public_code}
+                </div>
+                <div className="font-semibold text-gray-900 text-sm leading-tight">
+                  {m.name}
+                </div>
+                {cityProv && (
+                  <div className="text-xs text-gray-500 mt-0.5">{cityProv}</div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        <button
+          onClick={onBack}
+          className="w-full mt-5 bg-gray-100 text-gray-700 font-semibold py-3 rounded-xl hover:bg-gray-200 transition"
+        >
+          ← Back / Retour
+        </button>
+      </div>
+      <Footer />
+    </div>
+  );
+}
+
+function NotACustomerView({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="max-w-md mx-auto px-4">
+      <Brand />
+      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4 text-center">
+        <div className="text-5xl mb-4">🤝</div>
+        <h1 className="text-xl font-bold text-gray-900 mb-2">
+          We couldn&apos;t find that email
+        </h1>
+        <div className="text-sm text-gray-500 mb-5">
+          Adresse courriel introuvable
+        </div>
+        <p className="text-sm text-gray-700 mb-2 leading-relaxed">
+          If you&apos;re not currently a Mini Melts customer, please visit our website to learn more.
+        </p>
+        <p className="text-sm text-gray-500 mb-6 leading-relaxed">
+          Si vous n&apos;êtes pas encore client Mini Melts, visitez notre site web pour en savoir plus.
+        </p>
+
+        
+          href="https://minimelts.ca"
+          className="block w-full bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 transition"
+        >
+          Visit minimelts.ca →
+        </a>
+
+        <button
+          onClick={onBack}
+          className="w-full mt-3 bg-gray-100 text-gray-700 font-semibold py-3 rounded-xl hover:bg-gray-200 transition"
+        >
+          ← Try a different email / Essayer un autre courriel
         </button>
       </div>
       <Footer />
@@ -558,7 +830,7 @@ function DoneView({
               ? "Order for another store / Commander pour un autre magasin"
               : `Wait ${cooldown}s… / Attendez ${cooldown}s…`}
           </button>
-          <a
+          
             href="https://minimelts.ca"
             className="block w-full bg-gray-100 text-gray-700 font-semibold py-3.5 rounded-xl hover:bg-gray-200 transition text-center"
           >
