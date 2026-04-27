@@ -268,6 +268,67 @@ function OrderFormInner() {
 }
 
 // =================================================================
+// VIEW PROP TYPES
+// =================================================================
+
+type LookupViewProps = {
+  codeInput: string;
+  setCodeInput: (v: string) => void;
+  onSubmit: () => void;
+  onSwitchToEmail: () => void;
+  errorMsg: string;
+};
+
+type EmailLookupViewProps = {
+  emailInput: string;
+  setEmailInput: (v: string) => void;
+  onSubmit: () => void;
+  onBack: () => void;
+  errorMsg: string;
+};
+
+type EmailPickerViewProps = {
+  matches: StoreLookupResult[];
+  onPick: (match: StoreLookupResult) => void;
+  onBack: () => void;
+};
+
+type NotACustomerViewProps = {
+  onBack: () => void;
+};
+
+type ConfirmViewProps = {
+  store: StorePublicInfo;
+  contactName: string;
+  contactPhone: string;
+  contactEmail: string;
+  setContactName: (v: string) => void;
+  setContactPhone: (v: string) => void;
+  setContactEmail: (v: string) => void;
+  onNext: () => void;
+};
+
+type StockViewProps = {
+  stockLevel: StockLevel | null;
+  setStockLevel: (s: StockLevel) => void;
+  notes: string;
+  setNotes: (v: string) => void;
+  onBack: () => void;
+  onSubmit: () => void;
+};
+
+type DoneViewProps = {
+  store: StorePublicInfo;
+  orderId: string | null;
+  submittedAt: Date | null;
+};
+
+type ErrorViewProps = {
+  errorMsg: string;
+  onRetry: () => void;
+};
+
+// =================================================================
 // VIEWS
 // =================================================================
 
@@ -296,19 +357,8 @@ function LoadingView({ label = "Loading / Chargement…" }: { label?: string }) 
   );
 }
 
-function LookupView({
-  codeInput,
-  setCodeInput,
-  onSubmit,
-  onSwitchToEmail,
-  errorMsg,
-}: {
-  codeInput: string;
-  setCodeInput: (v: string) => void;
-  onSubmit: () => void;
-  onSwitchToEmail: () => void;
-  errorMsg: string;
-}) {
+function LookupView(props: LookupViewProps) {
+  const { codeInput, setCodeInput, onSubmit, onSwitchToEmail, errorMsg } = props;
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
@@ -360,19 +410,8 @@ function LookupView({
   );
 }
 
-function EmailLookupView({
-  emailInput,
-  setEmailInput,
-  onSubmit,
-  onBack,
-  errorMsg,
-}: {
-  emailInput: string;
-  setEmailInput: (v: string) => void;
-  onSubmit: () => void;
-  onBack: () => void;
-  errorMsg: string;
-}) {
+function EmailLookupView(props: EmailLookupViewProps) {
+  const { emailInput, setEmailInput, onSubmit, onBack, errorMsg } = props;
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
@@ -422,15 +461,8 @@ function EmailLookupView({
   );
 }
 
-function EmailPickerView({
-  matches,
-  onPick,
-  onBack,
-}: {
-  matches: StoreLookupResult[];
-  onPick: (match: StoreLookupResult) => void;
-  onBack: () => void;
-}) {
+function EmailPickerView(props: EmailPickerViewProps) {
+  const { matches, onPick, onBack } = props;
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
@@ -481,7 +513,8 @@ function EmailPickerView({
   );
 }
 
-function NotACustomerView({ onBack }: { onBack: () => void }) {
+function NotACustomerView(props: NotACustomerViewProps) {
+  const { onBack } = props;
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
@@ -519,25 +552,17 @@ function NotACustomerView({ onBack }: { onBack: () => void }) {
   );
 }
 
-function ConfirmView({
-  store,
-  contactName,
-  contactPhone,
-  contactEmail,
-  setContactName,
-  setContactPhone,
-  setContactEmail,
-  onNext,
-}: {
-  store: StorePublicInfo;
-  contactName: string;
-  contactPhone: string;
-  contactEmail: string;
-  setContactName: (v: string) => void;
-  setContactPhone: (v: string) => void;
-  setContactEmail: (v: string) => void;
-  onNext: () => void;
-}) {
+function ConfirmView(props: ConfirmViewProps) {
+  const {
+    store,
+    contactName,
+    contactPhone,
+    contactEmail,
+    setContactName,
+    setContactPhone,
+    setContactEmail,
+    onNext,
+  } = props;
   const cityProv = [store.ship_city, store.province].filter(Boolean).join(", ");
   const canContinue = contactName.trim().length > 0 && (contactPhone.trim() || contactEmail.trim());
   return (
@@ -622,21 +647,8 @@ function ConfirmView({
   );
 }
 
-function StockView({
-  stockLevel,
-  setStockLevel,
-  notes,
-  setNotes,
-  onBack,
-  onSubmit,
-}: {
-  stockLevel: StockLevel | null;
-  setStockLevel: (s: StockLevel) => void;
-  notes: string;
-  setNotes: (v: string) => void;
-  onBack: () => void;
-  onSubmit: () => void;
-}) {
+function StockView(props: StockViewProps) {
+  const { stockLevel, setStockLevel, notes, setNotes, onBack, onSubmit } = props;
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
@@ -711,15 +723,8 @@ function StockView({
   );
 }
 
-function DoneView({
-  store,
-  orderId,
-  submittedAt,
-}: {
-  store: StorePublicInfo;
-  orderId: string | null;
-  submittedAt: Date | null;
-}) {
+function DoneView(props: DoneViewProps) {
+  const { store, orderId, submittedAt } = props;
   // 5-second cooldown before "Order for another store" becomes clickable.
   // Prevents accidental double-submits and gives the customer time to read.
   const [cooldown, setCooldown] = useState(5);
@@ -843,7 +848,8 @@ function DoneView({
   );
 }
 
-function ErrorView({ errorMsg, onRetry }: { errorMsg: string; onRetry: () => void }) {
+function ErrorView(props: ErrorViewProps) {
+  const { errorMsg, onRetry } = props;
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
