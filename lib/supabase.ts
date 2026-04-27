@@ -32,9 +32,6 @@ export type StorePublicInfo = {
   active: boolean;
 };
 
-// Minimal projection returned by the email-based lookup. Intentionally does NOT
-// include phone/email/full address — that info is fetched only after the customer
-// confirms a specific store via lookupStoreByCode().
 export type StoreLookupResult = {
   id: string;
   public_code: string;
@@ -60,16 +57,11 @@ export async function lookupStoreByCode(code: string): Promise<StorePublicInfo |
   return data as StorePublicInfo | null;
 }
 
-// Look up active stores by their primary contact email (case-insensitive).
-// Backed by the public.lookup_stores_by_email() SQL function which is anon-callable
-// and returns only safe-to-expose fields. Returns [] for no match or on error.
 export async function lookupStoresByEmail(email: string): Promise<StoreLookupResult[]> {
   const trimmed = email.trim();
   if (!trimmed) return [];
-
   const { data, error } = await getSupabase()
     .rpc("lookup_stores_by_email", { p_email: trimmed });
-
   if (error) {
     console.error("Email lookup error:", error);
     return [];
@@ -78,43 +70,4 @@ export async function lookupStoresByEmail(email: string): Promise<StoreLookupRes
 }
 
 export async function submitOrder(input: {
-  store_id: string;
-  stock_level: StockLevel;
-  notes: string | null;
-  submitted_by_name: string;
-  submitted_by_phone: string | null;
-  submitted_by_email: string | null;
-  raw_form_payload: Record<string, unknown>;
-}): Promise<{ success: boolean; order_id?: string; error?: string }> {
-  // Generate the order ID client-side. This avoids needing SELECT permission
-  // on the orders table for the anon role (which would be a security weakening).
-  // crypto.randomUUID() is supported in all modern browsers + Node 19+.
-  const orderId = typeof crypto !== "undefined" && crypto.randomUUID
-    ? crypto.randomUUID()
-    : // Fallback for very old browsers — generates a UUIDv4-shaped string
-      "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-        const r = (Math.random() * 16) | 0;
-        const v = c === "x" ? r : (r & 0x3) | 0x8;
-        return v.toString(16);
-      });
-
-  const { error } = await getSupabase()
-    .from("orders")
-    .insert({
-      id: orderId,
-      store_id: input.store_id,
-      source: "online",
-      stock_level: input.stock_level,
-      notes: input.notes,
-      submitted_by_name: input.submitted_by_name,
-      submitted_by_phone: input.submitted_by_phone,
-      submitted_by_email: input.submitted_by_email,
-      raw_form_payload: input.raw_form_payload,
-      status: "pending",
-    });
-
-  if (error) {
-    return { success: false, error: error.message };
-  }
-  return { success: true, order_id: orderId };
-}
+  st
