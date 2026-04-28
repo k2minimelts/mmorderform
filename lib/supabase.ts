@@ -80,12 +80,12 @@ export type SubmitOrderInput = {
 };
 
 export type SubmitOrderResult =
-  | { success: true; orderId: string | null }
+  | { success: true }
   | { success: false; error: string };
 
 export async function submitOrder(input: SubmitOrderInput): Promise<SubmitOrderResult> {
   try {
-    const { data, error } = await getSupabase()
+    const { error } = await getSupabase()
       .from("orders")
       .insert({
         store_id: input.store_id,
@@ -97,15 +97,13 @@ export async function submitOrder(input: SubmitOrderInput): Promise<SubmitOrderR
         submitted_by_phone: input.submitted_by_phone,
         submitted_by_email: input.submitted_by_email,
         raw_form_payload: input.raw_form_payload,
-      })
-      .select("id")
-      .maybeSingle();
+      });
 
     if (error) {
       console.error("Order submit error:", error);
       return { success: false, error: error.message || "Could not save your order." };
     }
-    return { success: true, orderId: (data?.id as string) || null };
+    return { success: true };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Unexpected error submitting order.";
     console.error("Order submit exception:", e);
