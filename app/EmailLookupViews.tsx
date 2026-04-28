@@ -126,7 +126,7 @@ export function NotACustomerView(props: NotACustomerViewProps) {
       <p className="text-sm text-gray-500 mb-6 leading-relaxed">
         Si vous n&apos;&ecirc;tes pas encore client Mini Melts, visitez notre site web pour en savoir plus.
       </p>
-      
+      <a
         href="https://minimelts.ca"
         className="block w-full bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 transition"
       >
