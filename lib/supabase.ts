@@ -69,5 +69,46 @@ export async function lookupStoresByEmail(email: string): Promise<StoreLookupRes
   return (data as StoreLookupResult[]) || [];
 }
 
-export async function submitOrder(input: {
-  st
+export type SubmitOrderInput = {
+  store_id: string;
+  stock_level: StockLevel;
+  notes: string | null;
+  submitted_by_name: string;
+  submitted_by_phone: string | null;
+  submitted_by_email: string | null;
+  raw_form_payload: Record<string, unknown>;
+};
+
+export type SubmitOrderResult =
+  | { success: true; orderId: string | null }
+  | { success: false; error: string };
+
+export async function submitOrder(input: SubmitOrderInput): Promise<SubmitOrderResult> {
+  try {
+    const { data, error } = await getSupabase()
+      .from("orders")
+      .insert({
+        store_id: input.store_id,
+        source: "online",
+        status: "pending",
+        stock_level: input.stock_level,
+        notes: input.notes,
+        submitted_by_name: input.submitted_by_name,
+        submitted_by_phone: input.submitted_by_phone,
+        submitted_by_email: input.submitted_by_email,
+        raw_form_payload: input.raw_form_payload,
+      })
+      .select("id")
+      .maybeSingle();
+
+    if (error) {
+      console.error("Order submit error:", error);
+      return { success: false, error: error.message || "Could not save your order." };
+    }
+    return { success: true, orderId: (data?.id as string) || null };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Unexpected error submitting order.";
+    console.error("Order submit exception:", e);
+    return { success: false, error: msg };
+  }
+}
