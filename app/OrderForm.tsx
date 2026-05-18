@@ -9,6 +9,7 @@ import {
   StorePublicInfo,
   StoreLookupResult,
   StockLevel,
+  SorbetStockLevel,
 } from "@/lib/supabase";
 import {
   EmailLookupView,
@@ -35,6 +36,17 @@ const STOCK_OPTIONS: { value: StockLevel; en: string; fr: string; icon: string }
   { value: "three_quarter", en: "3/4 full", fr: "3/4 pleine", icon: "\u{1F5C3}\u{FE0F}" },
 ];
 
+// Sorbet stock options: same 4 levels as ice cream PLUS "own_freezer" for
+// customers who sell sorbet from their existing freezer (no Mini Melts sorbet
+// freezer at the store).
+const SORBET_STOCK_OPTIONS: { value: SorbetStockLevel; en: string; fr: string; icon: string }[] = [
+  { value: "empty", en: "Empty", fr: "Vide", icon: "\u{1F4ED}" },
+  { value: "almost_empty", en: "Almost empty", fr: "Presque vide", icon: "\u{1F4E6}" },
+  { value: "half", en: "Half full", fr: "Moiti\u00E9 pleine", icon: "\u{1F5C4}\u{FE0F}" },
+  { value: "three_quarter", en: "3/4 full", fr: "3/4 pleine", icon: "\u{1F5C3}\u{FE0F}" },
+  { value: "own_freezer", en: "I use my own freezer", fr: "J\u2019utilise mon propre cong\u00E9lateur", icon: "\u{1F9CA}" },
+];
+
 function OrderFormInner() {
   const searchParams = useSearchParams();
   const codeParam = searchParams.get("s") || searchParams.get("store") || "";
@@ -49,6 +61,10 @@ function OrderFormInner() {
   const [contactPhone, setContactPhone] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [stockLevel, setStockLevel] = useState<StockLevel | null>(null);
+  // Sorbet additions: independent of ice cream stock level. When the customer
+  // says no to sorbet, sorbetStockLevel stays null and we send null to the DB.
+  const [includesSorbet, setIncludesSorbet] = useState<boolean>(false);
+  const [sorbetStockLevel, setSorbetStockLevel] = useState<SorbetStockLevel | null>(null);
   const [notes, setNotes] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
@@ -136,6 +152,10 @@ function OrderFormInner() {
 
   async function handleSubmit() {
     if (!store || !stockLevel) return;
+    // If the customer said yes to sorbet, they must pick a sorbet stock level.
+    // The Place Order button is also disabled in this case, so this is a
+    // belt-and-suspenders guard.
+    if (includesSorbet && !sorbetStockLevel) return;
     setStep("submitting");
     const result = await submitOrder({
       store_id: store.id,
@@ -149,6 +169,10 @@ function OrderFormInner() {
         submitted_store_name: store.name,
         user_agent: typeof navigator !== "undefined" ? navigator.userAgent : "",
       },
+      includes_sorbet: includesSorbet,
+      // Force null when includes_sorbet is false so the DB CHECK constraint
+      // is satisfied regardless of any leftover state from toggling Yes->No.
+      sorbet_stock_level: includesSorbet ? sorbetStockLevel : null,
     });
     if (result.success) {
       setStep("done");
@@ -241,6 +265,16 @@ function OrderFormInner() {
       <StockView
         stockLevel={stockLevel}
         setStockLevel={setStockLevel}
+        includesSorbet={includesSorbet}
+        setIncludesSorbet={(v) => {
+          setIncludesSorbet(v);
+          // When toggling No, clear the sorbet stock so a stale value doesn't
+          // sneak through if the user toggles Yes again later (they should
+          // pick again).
+          if (!v) setSorbetStockLevel(null);
+        }}
+        sorbetStockLevel={sorbetStockLevel}
+        setSorbetStockLevel={setSorbetStockLevel}
         notes={notes}
         setNotes={setNotes}
         onBack={() => setStep("confirm")}
@@ -464,6 +498,10 @@ function ConfirmView(props: ConfirmViewProps) {
 type StockViewProps = {
   stockLevel: StockLevel | null;
   setStockLevel: (s: StockLevel) => void;
+  includesSorbet: boolean;
+  setIncludesSorbet: (v: boolean) => void;
+  sorbetStockLevel: SorbetStockLevel | null;
+  setSorbetStockLevel: (s: SorbetStockLevel) => void;
   notes: string;
   setNotes: (v: string) => void;
   onBack: () => void;
@@ -471,7 +509,18 @@ type StockViewProps = {
 };
 
 function StockView(props: StockViewProps) {
-  const { stockLevel, setStockLevel, notes, setNotes, onBack, onSubmit } = props;
+  const {
+    stockLevel, setStockLevel,
+    includesSorbet, setIncludesSorbet,
+    sorbetStockLevel, setSorbetStockLevel,
+    notes, setNotes,
+    onBack, onSubmit,
+  } = props;
+
+  // Submit allowed only when ice cream stock is picked AND (sorbet not
+  // requested OR sorbet stock is picked).
+  const canSubmit = !!stockLevel && (!includesSorbet || !!sorbetStockLevel);
+
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
@@ -480,10 +529,10 @@ function StockView(props: StockViewProps) {
           Step 2 of 2 / &Eacute;tape 2 de 2
         </div>
         <h1 className="text-xl font-bold text-gray-900 mb-1">
-          How full is your freezer?
+          How full is your ice cream freezer?
         </h1>
         <div className="text-sm text-gray-500 mb-4">
-          Quel est le niveau de votre cong&eacute;lateur?
+          Quel est le niveau de votre cong&eacute;lateur de cr&egrave;me glac&eacute;e?
         </div>
         <p className="text-xs text-gray-500 mb-5">
           Minimum order: 180 cups / Commande minimum : 180 unit&eacute;s
@@ -511,6 +560,76 @@ function StockView(props: StockViewProps) {
           })}
         </div>
 
+        {/* Sorbet add-on. Independent of ice cream stock. */}
+        <div className="border-t border-gray-200 pt-5 mb-5">
+          <h2 className="text-base font-bold text-gray-900 mb-1">
+            {"\u{1F368}"} Are you also ordering Mini Melts BIG Sorbet?
+          </h2>
+          <div className="text-sm text-gray-500 mb-3">
+            Commandez-vous aussi du sorbet Mini Melts BIG?
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => setIncludesSorbet(false)}
+              className={
+                "rounded-xl p-3 border-2 transition text-center font-semibold " +
+                (!includesSorbet
+                  ? "border-brand-pink bg-pink-50 text-gray-900"
+                  : "border-gray-200 bg-white text-gray-600 hover:border-gray-300")
+              }
+            >
+              No / Non
+            </button>
+            <button
+              onClick={() => setIncludesSorbet(true)}
+              className={
+                "rounded-xl p-3 border-2 transition text-center font-semibold " +
+                (includesSorbet
+                  ? "border-brand-pink bg-pink-50 text-gray-900"
+                  : "border-gray-200 bg-white text-gray-600 hover:border-gray-300")
+              }
+            >
+              Yes / Oui
+            </button>
+          </div>
+        </div>
+
+        {/* Sorbet stock picker — only when Yes is selected. */}
+        {includesSorbet && (
+          <div className="mb-5">
+            <h2 className="text-base font-bold text-gray-900 mb-1">
+              How much sorbet stock do you have?
+            </h2>
+            <div className="text-sm text-gray-500 mb-3">
+              Quel est votre stock de sorbet?
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {SORBET_STOCK_OPTIONS.map((opt) => {
+                const selected = sorbetStockLevel === opt.value;
+                // The "own_freezer" option is wider — full row on its own line.
+                const isFullWidth = opt.value === "own_freezer";
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => setSorbetStockLevel(opt.value)}
+                    className={
+                      "rounded-xl p-4 border-2 transition text-left " +
+                      (isFullWidth ? "col-span-2 " : "") +
+                      (selected
+                        ? "border-brand-pink bg-pink-50"
+                        : "border-gray-200 bg-white hover:border-gray-300")
+                    }
+                  >
+                    <div className="text-3xl mb-2">{opt.icon}</div>
+                    <div className="font-semibold text-gray-900 text-sm">{opt.en}</div>
+                    <div className="text-xs text-gray-500">{opt.fr}</div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="mb-2">
           <label className="block text-sm font-semibold text-gray-700 mb-1.5">
             Notes <span className="text-gray-400 font-normal">(optional / facultatif)</span>
@@ -533,7 +652,7 @@ function StockView(props: StockViewProps) {
           </button>
           <button
             onClick={onSubmit}
-            disabled={!stockLevel}
+            disabled={!canSubmit}
             className="flex-1 bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition"
           >
             Place order / Commander &rarr;
