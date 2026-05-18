@@ -42,6 +42,11 @@ export type StoreLookupResult = {
 
 export type StockLevel = "empty" | "almost_empty" | "half" | "three_quarter";
 
+// Sorbet has the same 4 levels PLUS "own_freezer" for customers who sell sorbet
+// from their existing freezer (no dedicated Mini Melts sorbet freezer needed).
+// The DB enum `order_stock_level` now contains all 5 values.
+export type SorbetStockLevel = StockLevel | "own_freezer";
+
 export async function lookupStoreByCode(code: string): Promise<StorePublicInfo | null> {
   const normalized = code.trim().toUpperCase();
   const { data, error } = await getSupabase()
@@ -77,6 +82,12 @@ export type SubmitOrderInput = {
   submitted_by_phone: string | null;
   submitted_by_email: string | null;
   raw_form_payload: Record<string, unknown>;
+  // Sorbet support. When includes_sorbet is true, sorbet_stock_level must be
+  // set; when false, it must be null. The DB has a CHECK constraint enforcing
+  // this so passing them through directly is safe — a bug in the UI will
+  // produce a clear DB error instead of silent bad data.
+  includes_sorbet: boolean;
+  sorbet_stock_level: SorbetStockLevel | null;
 };
 
 export type SubmitOrderResult =
@@ -97,6 +108,8 @@ export async function submitOrder(input: SubmitOrderInput): Promise<SubmitOrderR
         submitted_by_phone: input.submitted_by_phone,
         submitted_by_email: input.submitted_by_email,
         raw_form_payload: input.raw_form_payload,
+        includes_sorbet: input.includes_sorbet,
+        sorbet_stock_level: input.sorbet_stock_level,
       });
 
     if (error) {
