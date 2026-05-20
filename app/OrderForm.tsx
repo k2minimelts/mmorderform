@@ -1,31 +1,80 @@
-function LookupView(props: LookupViewProps) {
-  const { codeInput, setCodeInput, onSubmit, onSwitchToEmail, errorMsg } = props;
-  return (
-    <div className="max-w-md mx-auto px-4">
-      <Brand />
+"use client";
 
-      {/* Launch banner — TODO: remove or simplify after ~2026-07-15 once
-          existing customers are familiar with the new ordering site. */}
-      <div className="bg-gradient-to-br from-pink-50 to-teal-50 border border-pink-100 rounded-xl p-4 mt-4 text-center">
-        <div className="text-sm font-bold text-gray-900 mb-1">
-          {"\u{1F389}"} Welcome to the new Mini Melts Canada ordering site!
-        </div>
-        <div className="text-xs text-gray-600">
-          Bienvenue sur le nouveau site de commande Mini Melts Canada&nbsp;!
-        </div>
-      </div>
+import { useEffect, useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import {
+  lookupStoreByCode,
+  lookupStoresByEmail,
+  submitOrder,
+  StorePublicInfo,
+  StoreLookupResult,
+  StockLevel,
+  SorbetStockLevel,
+} from "@/lib/supabase";
+import {
+  EmailLookupView,
+  EmailPickerView,
+  NotACustomerView,
+} from "./EmailLookupViews";
 
-      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4">
-        <h1 className="text-xl font-bold text-gray-900 mb-1">
-          Enter your store code
-        </h1>
-        <div className="text-sm text-gray-500 mb-4">
-          Entrez le code de votre magasin
-        </div>
-        <p className="text-sm text-gray-600 mb-6">
-          Your code looks like <span className="font-mono font-bold">ST-1234</span>. If you don&apos;t know it, use the link below to look it up by email. <br />
-          <span className="text-gray-500">Votre code ressemble &agrave; <span className="font-mono font-bold">ST-1234</span>. Si vous ne le connaissez pas, retrouvez-le par courriel ci-dessous.</span>
-        </p>
-        <input
-          type="text"
-          placeholder="ST-1234"
+type Step =
+  | "loading"
+  | "lookup"
+  | "email_lookup"
+  | "email_picker"
+  | "not_a_customer"
+  | "confirm"
+  | "stock"
+  | "submitting"
+  | "done"
+  | "error";
+
+const STOCK_OPTIONS: { value: StockLevel; en: string; fr: string; icon: string }[] = [
+  { value: "empty", en: "Empty", fr: "Vide", icon: "\u{1F4ED}" },
+  { value: "almost_empty", en: "Almost empty", fr: "Presque vide", icon: "\u{1F4E6}" },
+  { value: "half", en: "Half full", fr: "Moiti\u00E9 pleine", icon: "\u{1F5C4}\u{FE0F}" },
+  { value: "three_quarter", en: "3/4 full", fr: "3/4 pleine", icon: "\u{1F5C3}\u{FE0F}" },
+];
+
+// Sorbet stock options: same 4 levels as ice cream PLUS "own_freezer" for
+// customers who sell sorbet from their existing freezer (no Mini Melts sorbet
+// freezer at the store).
+const SORBET_STOCK_OPTIONS: { value: SorbetStockLevel; en: string; fr: string; icon: string }[] = [
+  { value: "empty", en: "Empty", fr: "Vide", icon: "\u{1F4ED}" },
+  { value: "almost_empty", en: "Almost empty", fr: "Presque vide", icon: "\u{1F4E6}" },
+  { value: "half", en: "Half full", fr: "Moiti\u00E9 pleine", icon: "\u{1F5C4}\u{FE0F}" },
+  { value: "three_quarter", en: "3/4 full", fr: "3/4 pleine", icon: "\u{1F5C3}\u{FE0F}" },
+  { value: "own_freezer", en: "I use my own freezer", fr: "J\u2019utilise mon propre cong\u00E9lateur", icon: "\u{1F9CA}" },
+];
+
+function OrderFormInner() {
+  const searchParams = useSearchParams();
+  const codeParam = searchParams.get("s") || searchParams.get("store") || "";
+
+  const [step, setStep] = useState<Step>("loading");
+  const [codeInput, setCodeInput] = useState("");
+  const [emailInput, setEmailInput] = useState("");
+  const [emailMatches, setEmailMatches] = useState<StoreLookupResult[]>([]);
+  const [emailLookupError, setEmailLookupError] = useState("");
+  const [store, setStore] = useState<StorePublicInfo | null>(null);
+  const [contactName, setContactName] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [stockLevel, setStockLevel] = useState<StockLevel | null>(null);
+  const [includesSorbet, setIncludesSorbet] = useState<boolean>(false);
+  const [sorbetStockLevel, setSorbetStockLevel] = useState<SorbetStockLevel | null>(null);
+  const [notes, setNotes] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  function applyStoreToForm(result: StorePublicInfo) {
+    setStore(result);
+    const name = [result.first_name, result.last_name].filter(Boolean).join(" ");
+    setContactName(name);
+    setContactPhone(result.phone || "");
+    setContactEmail(result.email || "");
+  }
+
+  useEffect(() => {
+    if (codeParam) {
+      (async () => {
+        const
