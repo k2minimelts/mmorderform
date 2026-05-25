@@ -26,9 +26,9 @@ type Lang = "en" | "fr";
 
 const COPY = {
   en: {
-    heading: "Become a Mini Melts partner",
+    heading: "Get in touch",
     intro:
-      "Interested in selling Mini Melts or installing a freezer? Send us a note and our team will be in touch.",
+      "Have a question, want to sell Mini Melts, or just want to say hello? Send us a note and our team will get back to you.",
     firstName: "First Name",
     lastName: "Last Name",
     email: "Email",
@@ -49,9 +49,9 @@ const COPY = {
     switchTo: "Français",
   },
   fr: {
-    heading: "Devenez partenaire Mini Melts",
+    heading: "Contactez-nous",
     intro:
-      "Vous souhaitez vendre Mini Melts ou installer un congélateur ? Écrivez-nous et notre équipe vous contactera.",
+      "Une question, envie de vendre Mini Melts, ou simplement nous dire bonjour ? Écrivez-nous et notre équipe vous répondra.",
     firstName: "Prénom",
     lastName: "Nom",
     email: "Courriel",
