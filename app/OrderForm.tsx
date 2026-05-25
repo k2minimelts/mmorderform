@@ -6,6 +6,7 @@ import {
   lookupStoreByCode,
   lookupStoresByEmail,
   submitOrder,
+  hasOpenOrder,
   StorePublicInfo,
   StoreLookupResult,
   StockLevel,
@@ -25,6 +26,7 @@ type Step =
   | "not_a_customer"
   | "confirm"
   | "stock"
+  | "duplicate_order"
   | "submitting"
   | "done"
   | "error";
@@ -76,13 +78,22 @@ function OrderFormInner() {
     setContactEmail(result.email || "");
   }
 
+  // After a store is resolved, send the customer to the confirm step UNLESS the
+  // store already has an open (pending/scheduled) order — in which case route to
+  // the duplicate_order view so they find out immediately, before filling
+  // anything in. The DB trigger is the hard guardrail; this is the friendly UX.
+  async function routeAfterStoreResolved(result: StorePublicInfo) {
+    applyStoreToForm(result);
+    const open = await hasOpenOrder(result.id);
+    setStep(open ? "duplicate_order" : "confirm");
+  }
+
   useEffect(() => {
     if (codeParam) {
       (async () => {
         const result = await lookupStoreByCode(codeParam);
         if (result) {
-          applyStoreToForm(result);
-          setStep("confirm");
+          await routeAfterStoreResolved(result);
         } else {
           setCodeInput(codeParam);
           setErrorMsg("Code not found. Please check and try again.");
@@ -101,8 +112,7 @@ function OrderFormInner() {
     setStep("loading");
     const result = await lookupStoreByCode(trimmed);
     if (result) {
-      applyStoreToForm(result);
-      setStep("confirm");
+      await routeAfterStoreResolved(result);
     } else {
       setErrorMsg("Code not found. Please double-check or look it up by email below. / Code introuvable.");
       setStep("lookup");
@@ -126,8 +136,7 @@ function OrderFormInner() {
     if (matches.length === 1) {
       const full = await lookupStoreByCode(matches[0].public_code);
       if (full) {
-        applyStoreToForm(full);
-        setStep("confirm");
+        await routeAfterStoreResolved(full);
       } else {
         setErrorMsg("Could not load store details.");
         setStep("error");
@@ -142,8 +151,7 @@ function OrderFormInner() {
     setStep("loading");
     const full = await lookupStoreByCode(match.public_code);
     if (full) {
-      applyStoreToForm(full);
-      setStep("confirm");
+      await routeAfterStoreResolved(full);
     } else {
       setErrorMsg("Could not load store details.");
       setStep("error");
@@ -176,6 +184,11 @@ function OrderFormInner() {
     });
     if (result.success) {
       setStep("done");
+    } else if (result.duplicate) {
+      // The DB trigger rejected a second open order (e.g. one was created on
+      // another device between resolving the store and submitting). Show the
+      // same friendly duplicate view rather than a raw error.
+      setStep("duplicate_order");
     } else {
       setErrorMsg(result.error || "Submission failed. Please try again.");
       setStep("error");
@@ -243,6 +256,10 @@ function OrderFormInner() {
         <Footer />
       </div>
     );
+  }
+
+  if (step === "duplicate_order") {
+    return <DuplicateOrderView store={store!} />;
   }
 
   if (step === "confirm") {
@@ -698,6 +715,45 @@ function DoneView(props: DoneViewProps) {
         </p>
         <p className="text-sm text-gray-500 mb-2">
           Merci &mdash; votre demande a &eacute;t&eacute; envoy&eacute;e &agrave; votre d&eacute;p&ocirc;t local. Votre chauffeur vous contactera.
+        </p>
+      </div>
+      <Footer />
+    </div>
+  );
+}
+
+type DuplicateOrderViewProps = {
+  store: StorePublicInfo;
+};
+
+function DuplicateOrderView(props: DuplicateOrderViewProps) {
+  const { store } = props;
+  return (
+    <div className="max-w-md mx-auto px-4">
+      <Brand />
+      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4 text-center">
+        <div className="text-5xl mb-3">{"\u{1F4CB}"}</div>
+        <h1 className="text-xl font-bold text-gray-900 mb-1">
+          You already have an order in progress
+        </h1>
+        <div className="text-sm text-gray-500 mb-5">
+          Vous avez d&eacute;j&agrave; une commande en cours
+        </div>
+        <div className="bg-gradient-to-br from-pink-50 to-teal-50 border border-gray-100 rounded-xl p-4 mb-5 text-left">
+          <div className="text-xs text-gray-500 font-mono font-bold mb-1">
+            {store.public_code}
+          </div>
+          <div className="font-bold text-gray-900 leading-tight">{store.name}</div>
+        </div>
+        <p className="text-gray-700 mb-3">
+          We have an order for your store that&apos;s still being processed. If you need
+          to change it or add to it, please contact us at{" "}
+          <a href="mailto:info@minimelts.ca" className="font-semibold text-brand-tealDark hover:underline">info@minimelts.ca</a>.
+        </p>
+        <p className="text-sm text-gray-500">
+          Nous avons une commande en cours de traitement pour votre magasin. Pour la
+          modifier ou y ajouter, &eacute;crivez-nous &agrave;{" "}
+          <a href="mailto:info@minimelts.ca" className="font-semibold text-brand-tealDark hover:underline">info@minimelts.ca</a>.
         </p>
       </div>
       <Footer />
