@@ -74,6 +74,21 @@ export async function lookupStoresByEmail(email: string): Promise<StoreLookupRes
   return (data as StoreLookupResult[]) || [];
 }
 
+// Returns true if the store already has an open (pending or scheduled) order.
+// Backed by the store_has_open_order RPC (SECURITY DEFINER) so the public anon
+// client can check without read access to the orders table. Fails open (returns
+// false) on error so a transient RPC failure never blocks a legitimate order —
+// the DB trigger remains the hard guardrail regardless.
+export async function hasOpenOrder(storeId: string): Promise<boolean> {
+  const { data, error } = await getSupabase()
+    .rpc("store_has_open_order", { p_store_id: storeId });
+  if (error) {
+    console.error("Open-order check error:", error);
+    return false;
+  }
+  return data === true;
+}
+
 export type SubmitOrderInput = {
   store_id: string;
   stock_level: StockLevel;
@@ -92,7 +107,7 @@ export type SubmitOrderInput = {
 
 export type SubmitOrderResult =
   | { success: true }
-  | { success: false; error: string };
+  | { success: false; error: string; duplicate?: boolean };
 
 export async function submitOrder(input: SubmitOrderInput): Promise<SubmitOrderResult> {
   try {
@@ -114,6 +129,13 @@ export async function submitOrder(input: SubmitOrderInput): Promise<SubmitOrderR
 
     if (error) {
       console.error("Order submit error:", error);
+      // Backstop: the DB trigger blocks a second open order for the same store
+      // with a 'duplicate_open_order' exception. Detect it so the form can show
+      // the friendly "order already in progress" message instead of a raw error.
+      const raw = `${error.message || ""} ${(error as { details?: string }).details || ""} ${(error as { hint?: string }).hint || ""}`.toLowerCase();
+      if (raw.includes("duplicate_open_order") || raw.includes("order in progress")) {
+        return { success: false, duplicate: true, error: "This store already has an order in progress." };
+      }
       return { success: false, error: error.message || "Could not save your order." };
     }
     return { success: true };
