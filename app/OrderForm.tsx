@@ -195,6 +195,21 @@ function OrderFormInner() {
     }
   }
 
+  // "Is this your store?" → No. Clears the wrongly-resolved store and any
+  // contact details pre-filled from it, then sends the customer back to the
+  // code/email lookup. Without this, a customer who lands on the wrong store
+  // (e.g. by typing the example code) has no way to correct it and may submit
+  // an order against a store that isn't theirs.
+  function handleNotMyStore() {
+    setStore(null);
+    setContactName("");
+    setContactPhone("");
+    setContactEmail("");
+    setCodeInput("");
+    setErrorMsg("");
+    setStep("lookup");
+  }
+
   if (step === "loading") {
     return <LoadingView />;
   }
@@ -273,6 +288,7 @@ function OrderFormInner() {
         setContactPhone={setContactPhone}
         setContactEmail={setContactEmail}
         onNext={() => setStep("stock")}
+        onNotMyStore={handleNotMyStore}
       />
     );
   }
@@ -378,12 +394,12 @@ function LookupView(props: LookupViewProps) {
           Entrez le code de votre magasin
         </div>
         <p className="text-sm text-gray-600 mb-6">
-          Your code looks like <span className="font-mono font-bold">ST-1234</span>. If you don&apos;t know it, use the link below to look it up by email. <br />
-          <span className="text-gray-500">Votre code ressemble &agrave; <span className="font-mono font-bold">ST-1234</span>. Si vous ne le connaissez pas, retrouvez-le par courriel ci-dessous.</span>
+          Your code looks like <span className="font-mono font-bold">ST-XXXX</span>. If you don&apos;t know it, use the link below to look it up by email. <br />
+          <span className="text-gray-500">Votre code ressemble &agrave; <span className="font-mono font-bold">ST-XXXX</span>. Si vous ne le connaissez pas, retrouvez-le par courriel ci-dessous.</span>
         </p>
         <input
           type="text"
-          placeholder="ST-1234"
+          placeholder="ST-XXXX"
           value={codeInput}
           onChange={(e) => setCodeInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") onSubmit(); }}
@@ -427,6 +443,7 @@ type ConfirmViewProps = {
   setContactPhone: (v: string) => void;
   setContactEmail: (v: string) => void;
   onNext: () => void;
+  onNotMyStore: () => void;
 };
 
 function ConfirmView(props: ConfirmViewProps) {
@@ -439,6 +456,7 @@ function ConfirmView(props: ConfirmViewProps) {
     setContactPhone,
     setContactEmail,
     onNext,
+    onNotMyStore,
   } = props;
   const cityProv = [store.ship_city, store.province].filter(Boolean).join(", ");
   const canContinue = contactName.trim().length > 0 && (contactPhone.trim() !== "" || contactEmail.trim() !== "");
@@ -517,6 +535,13 @@ function ConfirmView(props: ConfirmViewProps) {
           className="w-full mt-6 bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition"
         >
           Continue / Continuer &rarr;
+        </button>
+        <button
+          type="button"
+          onClick={onNotMyStore}
+          className="w-full mt-3 text-sm font-semibold text-gray-500 hover:text-gray-700 hover:underline"
+        >
+          No, this isn&apos;t my store / Ce n&apos;est pas mon magasin
         </button>
       </div>
       <Footer />
