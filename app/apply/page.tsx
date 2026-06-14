@@ -155,6 +155,7 @@ const COPY = {
     errAddress: "Please enter your full store address.",
     errProgram: "Please select at least one program.",
     errFreezer: "Please let us know about freezer space.",
+    errCustomers: "Please tell us about how many customers visit per day.",
     errYears: "Please enter how many years you've been in business.",
     errLocations: "Please enter your number of locations.",
     errPostal: "Please enter your postal code.",
@@ -252,6 +253,7 @@ const COPY = {
     errAddress: "Veuillez entrer l'adresse complète de votre magasin.",
     errProgram: "Veuillez sélectionner au moins un programme.",
     errFreezer: "Veuillez nous indiquer si vous avez de l'espace pour un congélateur.",
+    errCustomers: "Veuillez indiquer environ combien de clients vous visitent par jour.",
     errYears: "Veuillez indiquer depuis combien d'années vous êtes en activité.",
     errLocations: "Veuillez indiquer votre nombre d'emplacements.",
     errPostal: "Veuillez entrer votre code postal.",
@@ -316,6 +318,7 @@ export default function ApplicationForm() {
     if (f.postal.trim().length < 1) return t.errPostal;
     if (!f.wantsIceCream && !f.wantsSorbet) return t.errProgram;
     if (!f.hasFreezerSpace) return t.errFreezer;
+    if (!f.customersPerDay) return t.errCustomers;
     if (!f.sellsNovelties) return t.errSells;
     if (f.sellsNovelties === "yes" && f.sellsNoveltiesMonthly.trim().length < 1) return t.errMonthly;
     if (!f.seasonality) return t.errSeasonality;
@@ -601,7 +604,7 @@ export default function ApplicationForm() {
           </div>
 
           <div className="mm-field">
-            <label className="mm-label" htmlFor="cust">{t.customers} <span className="mm-req">({t.optional})</span></label>
+            <label className="mm-label" htmlFor="cust">{t.customers} <span className="mm-req">({t.required})</span></label>
             <select id="cust" className="mm-select" value={f.customersPerDay} onChange={(e) => set("customersPerDay", e.target.value)}>
               <option value="">{t.customersChoose}</option>
               {CUSTOMERS.map((c) => <option key={c.value} value={c.value}>{c[lang]}</option>)}
