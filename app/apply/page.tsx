@@ -63,6 +63,7 @@ const CUSTOMERS: { value: string; en: string; fr: string }[] = [
 const PAYMENTS: { value: string; en: string; fr: string }[] = [
   { value: "pad_eft", en: "Pre-authorized debit / EFT", fr: "Débit préautorisé / TEF" },
   { value: "cheque", en: "Cheque", fr: "Chèque" },
+  { value: "cash", en: "Cash", fr: "Comptant" },
   { value: "e_transfer", en: "e-Transfer", fr: "Virement Interac" },
   { value: "terms", en: "Invoice terms (Net 30)", fr: "Termes de facturation (Net 30)" },
 ];
@@ -110,7 +111,7 @@ const COPY = {
     customers: "About how many customers visit per day?",
     customersChoose: "Choose…",
     sellsNovelties: "Do you currently sell ice cream or frozen novelties?",
-    sellsMonthly: "Roughly how much per month? (optional)",
+    sellsMonthly: "Roughly how much per month?",
     sellsMonthlyPh: "e.g. $500/month",
     seasonality: "Are you open year-round or seasonal?",
 
@@ -159,6 +160,8 @@ const COPY = {
     errPostal: "Please enter your postal code.",
     errSells: "Please tell us whether you currently sell ice cream or frozen novelties.",
     errSeasonality: "Please tell us whether you're open year-round or seasonal.",
+    errMonthly: "Please enter roughly how much you sell per month.",
+    errPayment: "Please choose a preferred payment method.",
     errCommit: "Please answer the minimum-commitment question.",
     errGeneric:
       "Something went wrong submitting your application. Please try again, or email sales@minimelts.ca.",
@@ -205,7 +208,7 @@ const COPY = {
     customers: "Environ combien de clients vous visitent par jour ?",
     customersChoose: "Choisissez…",
     sellsNovelties: "Vendez-vous déjà de la crème glacée ou des friandises glacées ?",
-    sellsMonthly: "Environ combien par mois ? (facultatif)",
+    sellsMonthly: "Environ combien par mois ?",
     sellsMonthlyPh: "p. ex. 500 $/mois",
     seasonality: "Êtes-vous ouvert toute l'année ou de façon saisonnière ?",
 
@@ -254,6 +257,8 @@ const COPY = {
     errPostal: "Veuillez entrer votre code postal.",
     errSells: "Veuillez indiquer si vous vendez déjà de la crème glacée ou des friandises glacées.",
     errSeasonality: "Veuillez indiquer si vous êtes ouvert toute l'année ou de façon saisonnière.",
+    errMonthly: "Veuillez indiquer environ combien vous vendez par mois.",
+    errPayment: "Veuillez choisir un mode de paiement préféré.",
     errCommit: "Veuillez répondre à la question sur l'engagement minimum.",
     errGeneric:
       "Une erreur est survenue lors de l'envoi de votre demande. Veuillez réessayer ou écrire à sales@minimelts.ca.",
@@ -312,7 +317,9 @@ export default function ApplicationForm() {
     if (!f.wantsIceCream && !f.wantsSorbet) return t.errProgram;
     if (!f.hasFreezerSpace) return t.errFreezer;
     if (!f.sellsNovelties) return t.errSells;
+    if (f.sellsNovelties === "yes" && f.sellsNoveltiesMonthly.trim().length < 1) return t.errMonthly;
     if (!f.seasonality) return t.errSeasonality;
+    if (!f.paymentPref) return t.errPayment;
     if (!f.commitsToMinimum) return t.errCommit;
     return null;
   }
@@ -608,7 +615,7 @@ export default function ApplicationForm() {
 
           {f.sellsNovelties === "yes" && (
             <div className="mm-field" style={{ maxWidth: 260 }}>
-              <label className="mm-label" htmlFor="monthly">{t.sellsMonthly}</label>
+              <label className="mm-label" htmlFor="monthly">{t.sellsMonthly} <span className="mm-req">({t.required})</span></label>
               <input id="monthly" className="mm-input" type="text" maxLength={60} placeholder={t.sellsMonthlyPh}
                 value={f.sellsNoveltiesMonthly} onChange={(e) => set("sellsNoveltiesMonthly", e.target.value)} />
             </div>
@@ -650,7 +657,7 @@ export default function ApplicationForm() {
           {/* ── Payment ── */}
           <div className="mm-sect">{t.secPayment}</div>
           <div className="mm-field">
-            <label className="mm-label" htmlFor="pay">{t.paymentPref} <span className="mm-req">({t.optional})</span></label>
+            <label className="mm-label" htmlFor="pay">{t.paymentPref} <span className="mm-req">({t.required})</span></label>
             <select id="pay" className="mm-select" value={f.paymentPref} onChange={(e) => set("paymentPref", e.target.value)}>
               <option value="">{t.paymentChoose}</option>
               {PAYMENTS.map((p) => <option key={p.value} value={p.value}>{p[lang]}</option>)}
