@@ -37,10 +37,13 @@ const T: Record<string, Record<string, string>> = {
     progSorbet: "Sorbet Freezer Program",
     keyTerms: "Key terms",
     viewFull: "View full agreement (PDF) ↗",
-    ackRead: "I have read and agree to the terms of this agreement.",
-    ackMin: "I commit to the annual minimum purchase requirement.",
-    ackSms:
-      "I’d like to receive SMS updates about orders and deliveries (optional — Section 13).",
+    signedTag: "Signed",
+    signHeading: "Sign your agreement",
+    signHeadingPlural: "Sign your agreements",
+    appliesAll: "One signature applies to every agreement above.",
+    ackRead: "I have read and agree to the agreement(s) above.",
+    ackMin: "I commit to the annual minimum purchase requirement for each program above.",
+    ackSms: "I’d like to receive SMS updates about orders and deliveries (optional — Section 13).",
     name: "Full name",
     titleLbl: "Title",
     titlePh: "e.g. Owner, Manager",
@@ -48,15 +51,12 @@ const T: Record<string, Record<string, string>> = {
     drawHint: "Draw your signature with your finger or mouse",
     clear: "Clear",
     sign: "Sign agreement",
+    signPlural: "Sign agreements",
     signing: "Signing…",
-    signed: "Signed",
     allDoneTitle: "All done!",
     allDoneBody:
       "Thank you. A signed copy has been emailed to you. We’ll be in touch about getting your freezer set up.",
-    errGeneric: "Something went wrong. Please try again.",
-    errAck: "Please check both required boxes to continue.",
-    errSig: "Please add your signature.",
-    errName: "Please enter your name.",
+    errGeneric: "Something didn’t go through. Please try again.",
     perOrder: "per order",
     perYear: "per year",
     perMonth: "month",
@@ -78,10 +78,13 @@ const T: Record<string, Record<string, string>> = {
     progSorbet: "Programme de congélateur (sorbet)",
     keyTerms: "Modalités clés",
     viewFull: "Voir l’entente complète (PDF) ↗",
-    ackRead: "J’ai lu et j’accepte les modalités de la présente entente.",
-    ackMin: "Je m’engage à respecter l’exigence minimale d’achat annuelle.",
-    ackSms:
-      "Je souhaite recevoir des messages texte concernant les commandes et livraisons (facultatif — article 13).",
+    signedTag: "Signée",
+    signHeading: "Signez votre entente",
+    signHeadingPlural: "Signez vos ententes",
+    appliesAll: "Une seule signature s’applique à toutes les ententes ci-dessus.",
+    ackRead: "J’ai lu et j’accepte la ou les ententes ci-dessus.",
+    ackMin: "Je m’engage à respecter l’exigence minimale d’achat annuelle pour chaque programme ci-dessus.",
+    ackSms: "Je souhaite recevoir des messages texte concernant les commandes et livraisons (facultatif — article 13).",
     name: "Nom complet",
     titleLbl: "Titre",
     titlePh: "p. ex. propriétaire, gérant",
@@ -89,15 +92,12 @@ const T: Record<string, Record<string, string>> = {
     drawHint: "Dessinez votre signature avec le doigt ou la souris",
     clear: "Effacer",
     sign: "Signer l’entente",
+    signPlural: "Signer les ententes",
     signing: "Signature en cours…",
-    signed: "Signée",
     allDoneTitle: "C’est fait!",
     allDoneBody:
       "Merci. Une copie signée vous a été envoyée par courriel. Nous communiquerons avec vous pour l’installation de votre congélateur.",
     errGeneric: "Une erreur s’est produite. Veuillez réessayer.",
-    errAck: "Veuillez cocher les deux cases requises pour continuer.",
-    errSig: "Veuillez ajouter votre signature.",
-    errName: "Veuillez saisir votre nom.",
     perOrder: "par commande",
     perYear: "par année",
     perMonth: "mois",
@@ -107,10 +107,7 @@ const T: Record<string, Record<string, string>> = {
 function money(n: unknown, lang: string): string {
   const v = Number(n);
   if (!isFinite(v)) return String(n ?? "");
-  const s = v.toLocaleString(lang === "fr" ? "fr-CA" : "en-CA", {
-    style: "currency",
-    currency: "CAD",
-  });
+  const s = v.toLocaleString(lang === "fr" ? "fr-CA" : "en-CA", { style: "currency", currency: "CAD" });
   return s.replace(/,00\s*\$$/, " $").replace(/\.00$/, "");
 }
 
@@ -156,7 +153,7 @@ function termsLines(program: string, terms: any, lang: string): string[] {
   return lines;
 }
 
-function SignaturePad({ onChange }: { onChange: (d: string | null) => void }) {
+function useSignaturePad(onChange: (d: string | null) => void) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const drawing = useRef(false);
   const inked = useRef(false);
@@ -216,15 +213,16 @@ function SignaturePad({ onChange }: { onChange: (d: string | null) => void }) {
     onChange(null);
   };
 
-  return { clear, canvasRef, down, move, up };
+  return { canvasRef, down, move, up, clear };
 }
 
 export default function SignPage({ token }: { token: string }) {
   const [loading, setLoading] = useState(true);
   const [invalid, setInvalid] = useState(false);
   const [session, setSession] = useState<any>(null);
-  const [forms, setForms] = useState<Record<string, any>>({});
   const [signedSet, setSignedSet] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [globalErr, setGlobalErr] = useState("");
   const [lang, setLang] = useState("en");
   const userPicked = useRef(false);
 
@@ -258,20 +256,6 @@ export default function SignPage({ token }: { token: string }) {
           setLoading(false);
           return;
         }
-        const init: Record<string, any> = {};
-        (data.agreements || []).forEach((a: any) => {
-          init[a.program] = {
-            name: data.retailer.contact_name || "",
-            title: data.retailer.applicant_title || "",
-            read: false,
-            minimum: false,
-            sms: false,
-            sig: null,
-            submitting: false,
-            err: "",
-          };
-        });
-        setForms(init);
         setSignedSet(
           new Set(
             (data.agreements || [])
@@ -295,50 +279,55 @@ export default function SignPage({ token }: { token: string }) {
   }, [token]);
 
   const t = T[lang];
-  const setForm = (p: string, patch: any) =>
-    setForms((prev) => ({ ...prev, [p]: { ...prev[p], ...patch } }));
-
-  const submit = async (program: string) => {
-    const f = forms[program];
-    if (!f.name.trim()) return setForm(program, { err: t.errName });
-    if (!f.read || !f.minimum) return setForm(program, { err: t.errAck });
-    if (!f.sig) return setForm(program, { err: t.errSig });
-    setForm(program, { submitting: true, err: "" });
-    try {
-      const r = await fetch(`${FN_BASE}/submit-signature`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          token,
-          program,
-          signer_name: f.name.trim(),
-          signer_title: f.title.trim(),
-          signature_image: f.sig,
-          ack_read: f.read,
-          ack_minimum: f.minimum,
-          sms_consent: f.sms,
-          lang,
-        }),
-      });
-      const data = await r.json();
-      if (data && (data.ok || data.error === "already_signed")) {
-        setSignedSet((prev) => new Set(prev).add(program));
-      } else if (data && data.error === "invalid_or_expired") {
-        setInvalid(true);
-      } else {
-        setForm(program, { submitting: false, err: t.errGeneric });
-      }
-    } catch {
-      setForm(program, { submitting: false, err: t.errGeneric });
-    }
-  };
-
   const progName = (p: string) => (p === "sorbet" ? t.progSorbet : t.progIce);
-
   const agreements = (session?.agreements || []) as any[];
   const pending = agreements.filter((a) => !signedSet.has(a.program));
   const allDone = !!session && agreements.length > 0 && pending.length === 0;
   const r = session?.retailer || {};
+
+  const signAll = async (payload: any) => {
+    setBusy(true);
+    setGlobalErr("");
+    const toSign = agreements.filter((a) => !signedSet.has(a.program));
+    let anyFail = false;
+    for (const a of toSign) {
+      try {
+        const res = await fetch(`${FN_BASE}/submit-signature`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            token,
+            program: a.program,
+            signer_name: payload.name,
+            signer_title: payload.title,
+            signature_image: payload.sig,
+            ack_read: payload.read,
+            ack_minimum: payload.minimum,
+            sms_consent: payload.sms,
+            lang,
+          }),
+        });
+        const data = await res.json();
+        if (data && (data.ok || data.error === "already_signed")) {
+          setSignedSet((prev) => {
+            const n = new Set(prev);
+            n.add(a.program);
+            return n;
+          });
+        } else if (data && data.error === "invalid_or_expired") {
+          setInvalid(true);
+          setBusy(false);
+          return;
+        } else {
+          anyFail = true;
+        }
+      } catch {
+        anyFail = true;
+      }
+    }
+    setBusy(false);
+    if (anyFail) setGlobalErr(t.errGeneric);
+  };
 
   return (
     <div className="mm-wrap">
@@ -346,24 +335,8 @@ export default function SignPage({ token }: { token: string }) {
       <div className="mm-head">
         <div className="mm-brand">MINI MELTS</div>
         <div className="mm-lang">
-          <button
-            className={lang === "en" ? "on" : ""}
-            onClick={() => {
-              userPicked.current = true;
-              setLang("en");
-            }}
-          >
-            EN
-          </button>
-          <button
-            className={lang === "fr" ? "on" : ""}
-            onClick={() => {
-              userPicked.current = true;
-              setLang("fr");
-            }}
-          >
-            FR
-          </button>
+          <button className={lang === "en" ? "on" : ""} onClick={() => { userPicked.current = true; setLang("en"); }}>EN</button>
+          <button className={lang === "fr" ? "on" : ""} onClick={() => { userPicked.current = true; setLang("fr"); }}>FR</button>
         </div>
       </div>
 
@@ -384,43 +357,43 @@ export default function SignPage({ token }: { token: string }) {
             <h3 className="mm-card-title">{t.yourDetails}</h3>
             <Row k={t.legal} v={r.legal_name} />
             {r.operating_name ? <Row k={t.operating} v={r.operating_name} /> : null}
-            <Row
-              k={t.address}
-              v={[r.addr1, r.city, r.province, r.postal].filter(Boolean).join(", ")}
-            />
+            <Row k={t.address} v={[r.addr1, r.city, r.province, r.postal].filter(Boolean).join(", ")} />
             <Row k={t.email} v={r.email} />
             <Row k={t.phone} v={r.phone} />
             <div className="mm-muted">{t.notRight}</div>
           </div>
 
-          {allDone && (
+          {agreements.map((a) => (
+            <div className="mm-card" key={a.program}>
+              <div className="mm-prog-head">
+                <h3 className="mm-card-title" style={{ margin: 0 }}>{progName(a.program)}</h3>
+                {signedSet.has(a.program) && (
+                  <span className="mm-prog-badge"><span className="tick">✓</span> {t.signedTag}</span>
+                )}
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#7a8488", margin: "10px 0 6px" }}>{t.keyTerms}</div>
+              <ul className="mm-terms">
+                {termsLines(a.program, a.terms || {}, lang).map((l: string, i: number) => <li key={i}>{l}</li>)}
+              </ul>
+              <a className="mm-link" href={templateUrl(a.program, lang)} target="_blank" rel="noopener noreferrer">{t.viewFull}</a>
+            </div>
+          ))}
+
+          {allDone ? (
             <div className="mm-card mm-success">
               <div className="big">🎉</div>
               <h2>{t.allDoneTitle}</h2>
               <p>{t.allDoneBody}</p>
             </div>
-          )}
-
-          {agreements.map((a) =>
-            signedSet.has(a.program) ? (
-              <div className="mm-card" key={a.program}>
-                <h3 className="mm-card-title">{progName(a.program)}</h3>
-                <div className="mm-signed">
-                  <span className="tick">✓</span> {t.signed}
-                </div>
-              </div>
-            ) : (
-              <AgreementCard
-                key={a.program}
-                a={a}
-                lang={lang}
-                t={t}
-                form={forms[a.program]}
-                setForm={(patch: any) => setForm(a.program, patch)}
-                onSubmit={() => submit(a.program)}
-                progName={progName(a.program)}
-              />
-            )
+          ) : (
+            <SigningSection
+              t={t}
+              count={pending.length}
+              busy={busy}
+              err={globalErr}
+              defaults={{ name: r.contact_name || "", title: r.applicant_title || "" }}
+              onSign={signAll}
+            />
           )}
         </>
       )}
@@ -437,57 +410,42 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-function AgreementCard({ a, lang, t, form, setForm, onSubmit, progName }: any) {
-  const pad = SignaturePad({ onChange: (d) => setForm({ sig: d }) });
-  const canSign =
-    !!form?.name?.trim() && form?.read && form?.minimum && !!form?.sig && !form?.submitting;
+function SigningSection({ t, count, busy, err, defaults, onSign }: any) {
+  const [name, setName] = useState(defaults.name || "");
+  const [title, setTitle] = useState(defaults.title || "");
+  const [read, setRead] = useState(false);
+  const [minimum, setMinimum] = useState(false);
+  const [sms, setSms] = useState(false);
+  const [sig, setSig] = useState<string | null>(null);
+  const pad = useSignaturePad(setSig);
+  const canSign = !!name.trim() && read && minimum && !!sig && !busy;
+  const many = count > 1;
 
   return (
     <div className="mm-card">
-      <h3 className="mm-card-title">{progName}</h3>
-
-      <div style={{ fontSize: 13, fontWeight: 700, color: "#7a8488", margin: "0 0 6px" }}>
-        {t.keyTerms}
-      </div>
-      <ul className="mm-terms">
-        {termsLines(a.program, a.terms || {}, lang).map((l: string, i: number) => (
-          <li key={i}>{l}</li>
-        ))}
-      </ul>
-
-      <a className="mm-link" href={templateUrl(a.program, lang)} target="_blank" rel="noopener noreferrer">
-        {t.viewFull}
-      </a>
+      <h3 className="mm-card-title">{many ? t.signHeadingPlural : t.signHeading}</h3>
+      {many && <div className="mm-sign-note">{t.appliesAll}</div>}
 
       <label className="mm-check-row">
-        <input type="checkbox" checked={!!form?.read} onChange={(e) => setForm({ read: e.target.checked })} />
+        <input type="checkbox" checked={read} onChange={(e) => setRead(e.target.checked)} />
         <span>{t.ackRead}</span>
       </label>
       <label className="mm-check-row">
-        <input type="checkbox" checked={!!form?.minimum} onChange={(e) => setForm({ minimum: e.target.checked })} />
+        <input type="checkbox" checked={minimum} onChange={(e) => setMinimum(e.target.checked)} />
         <span>{t.ackMin}</span>
       </label>
       <label className="mm-check-row">
-        <input type="checkbox" checked={!!form?.sms} onChange={(e) => setForm({ sms: e.target.checked })} />
+        <input type="checkbox" checked={sms} onChange={(e) => setSms(e.target.checked)} />
         <span>{t.ackSms}</span>
       </label>
 
       <div className="mm-field">
         <label>{t.name}</label>
-        <input
-          className="mm-input"
-          value={form?.name || ""}
-          onChange={(e) => setForm({ name: e.target.value })}
-        />
+        <input className="mm-input" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
       <div className="mm-field">
         <label>{t.titleLbl}</label>
-        <input
-          className="mm-input"
-          placeholder={t.titlePh}
-          value={form?.title || ""}
-          onChange={(e) => setForm({ title: e.target.value })}
-        />
+        <input className="mm-input" placeholder={t.titlePh} value={title} onChange={(e) => setTitle(e.target.value)} />
       </div>
 
       <div className="mm-field">
@@ -503,24 +461,19 @@ function AgreementCard({ a, lang, t, form, setForm, onSubmit, progName }: any) {
           />
           <div className="mm-sigbar">
             <span className="mm-sighint">{t.drawHint}</span>
-            <button
-              type="button"
-              className="mm-clear"
-              onClick={() => {
-                pad.clear();
-                setForm({ sig: null });
-              }}
-            >
-              {t.clear}
-            </button>
+            <button type="button" className="mm-clear" onClick={() => { pad.clear(); setSig(null); }}>{t.clear}</button>
           </div>
         </div>
       </div>
 
-      {form?.err ? <div className="mm-err">{form.err}</div> : null}
+      {err ? <div className="mm-err">{err}</div> : null}
 
-      <button className="mm-btn" disabled={!canSign} onClick={onSubmit}>
-        {form?.submitting ? t.signing : t.sign}
+      <button
+        className="mm-btn"
+        disabled={!canSign}
+        onClick={() => onSign({ name: name.trim(), title: title.trim(), read, minimum, sms, sig })}
+      >
+        {busy ? t.signing : many ? t.signPlural : t.sign}
       </button>
     </div>
   );
@@ -536,6 +489,9 @@ const CSS = `
 .mm-lang button.on{background:#34b3c4;border-color:#34b3c4;color:#fff}
 .mm-card{border:1px solid #e6eaec;border-radius:14px;padding:18px;margin:14px 0;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.04)}
 .mm-card-title{font-size:16px;font-weight:700;color:#34b3c4;margin:0 0 12px}
+.mm-prog-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.mm-prog-badge{display:inline-flex;align-items:center;gap:6px;color:#2c8a5a;font-weight:700;font-size:13px}
+.mm-prog-badge .tick{width:20px;height:20px;border-radius:50%;background:#2c8a5a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px}
 .mm-row{display:flex;gap:8px;font-size:14px;padding:3px 0}
 .mm-row .k{color:#7a8488;min-width:120px}
 .mm-row .v{font-weight:600}
@@ -543,7 +499,8 @@ const CSS = `
 .mm-terms{list-style:none;padding:0;margin:0 0 14px}
 .mm-terms li{position:relative;padding:5px 0 5px 18px;font-size:14px;line-height:1.45}
 .mm-terms li:before{content:"";position:absolute;left:0;top:11px;width:6px;height:6px;border-radius:50%;background:#ef5a9c}
-.mm-link{display:inline-block;margin-bottom:16px;color:#34b3c4;font-weight:600;font-size:14px;text-decoration:none;border-bottom:1px solid #bfe6ec;padding-bottom:1px}
+.mm-link{display:inline-block;color:#34b3c4;font-weight:600;font-size:14px;text-decoration:none;border-bottom:1px solid #bfe6ec;padding-bottom:1px}
+.mm-sign-note{font-size:12.5px;color:#8a9296;margin:-4px 0 12px}
 .mm-check-row{display:flex;gap:10px;align-items:flex-start;margin:11px 0;font-size:13.5px;line-height:1.45;cursor:pointer}
 .mm-check-row input{margin-top:1px;width:18px;height:18px;accent-color:#34b3c4;flex:0 0 auto}
 .mm-field{margin:14px 0}
@@ -558,8 +515,6 @@ const CSS = `
 .mm-btn{width:100%;margin-top:16px;border:none;border-radius:999px;background:#ef5a9c;color:#fff;font-size:16px;font-weight:700;padding:14px;cursor:pointer}
 .mm-btn:disabled{background:#f3bcd5;cursor:not-allowed}
 .mm-err{color:#d6336c;font-size:13px;margin-top:10px}
-.mm-signed{display:flex;align-items:center;gap:10px;color:#2c8a5a;font-weight:700;font-size:15px}
-.mm-signed .tick{width:24px;height:24px;border-radius:50%;background:#2c8a5a;color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px}
 .mm-success{text-align:center}
 .mm-success .big{font-size:40px;margin-bottom:6px}
 .mm-success h2{color:#34b3c4;margin:0 0 8px}
