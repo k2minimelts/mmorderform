@@ -30,6 +30,7 @@ export type StorePublicInfo = {
   province: string | null;
   ship_postal: string | null;
   active: boolean;
+  sorbet_enrolled: boolean; 
 };
 
 export type StoreLookupResult = {
