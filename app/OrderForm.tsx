@@ -7,6 +7,7 @@ import {
   lookupStoresByEmail,
   submitOrder,
   hasOpenOrder,
+  enrollSorbetOwnFreezer,
   StorePublicInfo,
   StoreLookupResult,
   StockLevel,
@@ -325,6 +326,7 @@ function OrderFormInner() {
         setNotes={setNotes}
         onBack={() => setStep("confirm")}
         onSubmit={handleSubmit}
+        onSorbetEnrolled={() => setStore((s) => (s ? { ...s, sorbet_enrolled: true } : s))}
       />
     );
   }
@@ -575,6 +577,7 @@ type StockViewProps = {
   setNotes: (v: string) => void;
   onBack: () => void;
   onSubmit: () => void;
+  onSorbetEnrolled: () => void;
 };
 
 function StockView(props: StockViewProps) {
@@ -584,12 +587,25 @@ function StockView(props: StockViewProps) {
     includesSorbet, setIncludesSorbet,
     sorbetStockLevel, setSorbetStockLevel,
     notes, setNotes,
-    onBack, onSubmit,
+    onBack, onSubmit, onSorbetEnrolled,
   } = props;
 
   // Submit allowed only when ice cream stock is picked AND (sorbet not
   // requested OR sorbet stock is picked).
   const canSubmit = !!stockLevel && (!includesSorbet || !!sorbetStockLevel);
+
+  // Self-serve BYO sorbet (Option B): the store already has their own -18°C
+  // freezer, so enable sorbet instantly — no agreement, no Mini Melts freezer.
+  const [enrolling, setEnrolling] = useState(false);
+  const [enrollErr, setEnrollErr] = useState<string | null>(null);
+  const handleEnrollOwnFreezer = async () => {
+    setEnrolling(true);
+    setEnrollErr(null);
+    const res = await enrollSorbetOwnFreezer(storeCode);
+    setEnrolling(false);
+    if (res.ok) onSorbetEnrolled();
+    else setEnrollErr("Couldn't enable sorbet — please try again.");
+  };
 
   return (
     <div className="max-w-md mx-auto px-4">
@@ -725,6 +741,17 @@ function StockView(props: StockViewProps) {
               >
                 Apply for sorbet / Demander le sorbet &rarr;
               </a>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={handleEnrollOwnFreezer}
+                  disabled={enrolling}
+                  className="text-sm font-semibold text-brand-pink underline underline-offset-2 hover:opacity-80 disabled:opacity-50"
+                >
+                  {enrolling ? "Enabling…" : "I already have my own −18°C freezer — enable sorbet →"}
+                </button>
+                {enrollErr && <p className="text-xs text-red-500 mt-1">{enrollErr}</p>}
+              </div>
               <p className="text-xs text-gray-400 mt-2">
                 You can still place your ice cream order below. / Vous pouvez tout de m&ecirc;me commander votre cr&egrave;me glac&eacute;e ci&#8209;dessous.
               </p>
