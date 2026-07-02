@@ -121,7 +121,6 @@ const COPY = {
     paymentPref: "Preferred payment method",
     paymentChoose: "Choose…",
     eftConsent: "I agree to set up pre-authorized debit (EFT) for payments.",
-    required: "required",
 
     message: "Anything else we should know?",
 
@@ -219,7 +218,6 @@ const COPY = {
     paymentPref: "Mode de paiement préféré",
     paymentChoose: "Choisissez…",
     eftConsent: "J'accepte de mettre en place le débit préautorisé (DPA) pour les paiements.",
-    required: "requis",
 
     message: "Autre chose à nous dire ?",
 
