@@ -60,13 +60,6 @@ const CUSTOMERS: { value: string; en: string; fr: string }[] = [
   { value: "1500_plus", en: "1,500+", fr: "1 500+" },
 ];
 
-const PAYMENTS: { value: string; en: string; fr: string }[] = [
-  { value: "pad_eft", en: "Pre-authorized debit / EFT", fr: "Débit préautorisé / TEF" },
-  { value: "cheque", en: "Cheque", fr: "Chèque" },
-  { value: "cash", en: "Cash", fr: "Comptant" },
-  { value: "e_transfer", en: "e-Transfer", fr: "Virement Interac" },
-  { value: "terms", en: "Invoice terms (Net 30)", fr: "Termes de facturation (Net 30)" },
-];
 
 const COPY = {
   en: {
@@ -127,6 +120,7 @@ const COPY = {
 
     paymentPref: "Preferred payment method",
     paymentChoose: "Choose…",
+    eftConsent: "I agree to set up pre-authorized debit (EFT) for payments.",
 
     message: "Anything else we should know?",
 
@@ -163,6 +157,7 @@ const COPY = {
     errSeasonality: "Please tell us whether you're open year-round or seasonal.",
     errMonthly: "Please enter roughly how much you sell per month.",
     errPayment: "Please choose a preferred payment method.",
+    errEft: "Please agree to set up EFT payments to continue.",
     errCommit: "Please answer the minimum-commitment question.",
     errGeneric:
       "Something went wrong submitting your application. Please try again, or email sales@minimelts.ca.",
@@ -225,6 +220,7 @@ const COPY = {
 
     paymentPref: "Mode de paiement préféré",
     paymentChoose: "Choisissez…",
+    eftConsent: "J'accepte de mettre en place le débit préautorisé (DPA) pour les paiements.",
 
     message: "Autre chose à nous dire ?",
 
@@ -261,6 +257,7 @@ const COPY = {
     errSeasonality: "Veuillez indiquer si vous êtes ouvert toute l'année ou de façon saisonnière.",
     errMonthly: "Veuillez indiquer environ combien vous vendez par mois.",
     errPayment: "Veuillez choisir un mode de paiement préféré.",
+    errEft: "Veuillez accepter la mise en place des paiements par DPA pour continuer.",
     errCommit: "Veuillez répondre à la question sur l'engagement minimum.",
     errGeneric:
       "Une erreur est survenue lors de l'envoi de votre demande. Veuillez réessayer ou écrire à sales@minimelts.ca.",
@@ -275,7 +272,7 @@ type FormState = {
   hasFreezerSpace: string; hasPowerOutlet: string;
   customersPerDay: string; sellsNovelties: string; sellsNoveltiesMonthly: string; seasonality: string;
   wantsIceCream: boolean; wantsSorbet: boolean;
-  commitsToMinimum: string; paymentPref: string; message: string;
+  commitsToMinimum: string; paymentPref: string; eftAgree: boolean; message: string;
 };
 
 const INITIAL: FormState = {
@@ -286,7 +283,7 @@ const INITIAL: FormState = {
   hasFreezerSpace: "", hasPowerOutlet: "",
   customersPerDay: "", sellsNovelties: "", sellsNoveltiesMonthly: "", seasonality: "",
   wantsIceCream: false, wantsSorbet: false,
-  commitsToMinimum: "", paymentPref: "", message: "",
+  commitsToMinimum: "", paymentPref: "pad_eft", eftAgree: false, message: "",
 };
 
 export default function ApplicationForm() {
@@ -322,7 +319,7 @@ export default function ApplicationForm() {
     if (!f.sellsNovelties) return t.errSells;
     if (f.sellsNovelties === "yes" && f.sellsNoveltiesMonthly.trim().length < 1) return t.errMonthly;
     if (!f.seasonality) return t.errSeasonality;
-    if (!f.paymentPref) return t.errPayment;
+    if (!f.eftAgree) return t.errEft;
     if (!f.commitsToMinimum) return t.errCommit;
     return null;
   }
@@ -659,12 +656,11 @@ export default function ApplicationForm() {
 
           {/* ── Payment ── */}
           <div className="mm-sect">{t.secPayment}</div>
-          <div className="mm-field">
-            <label className="mm-label" htmlFor="pay">{t.paymentPref} <span className="mm-req">({t.required})</span></label>
-            <select id="pay" className="mm-select" value={f.paymentPref} onChange={(e) => set("paymentPref", e.target.value)}>
-              <option value="">{t.paymentChoose}</option>
-              {PAYMENTS.map((p) => <option key={p.value} value={p.value}>{p[lang]}</option>)}
-            </select>
+          <div className={`mm-prog${f.eftAgree ? " active" : ""}`} onClick={() => set("eftAgree", !f.eftAgree)}>
+            <div className="mm-prog-head">
+              <input type="checkbox" checked={f.eftAgree} onChange={(e) => set("eftAgree", e.target.checked)} onClick={(e) => e.stopPropagation()} />
+              <span className="mm-prog-title">{t.eftConsent} <span className="mm-req">({t.required})</span></span>
+            </div>
           </div>
 
           <div className="mm-field">
