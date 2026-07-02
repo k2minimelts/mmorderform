@@ -90,6 +90,26 @@ export async function hasOpenOrder(storeId: string): Promise<boolean> {
   return data === true;
 }
 
+// Self-serve BYO sorbet (Option B): flips the store to sorbet-enrolled with
+// their own -18°C freezer — no agreement, no Mini Melts freezer. Calls the
+// enroll-sorbet-own-freezer edge function (public; it performs the service-role
+// write server-side, so the anon client never touches the stores table directly).
+export async function enrollSorbetOwnFreezer(
+  publicCode: string
+): Promise<{ ok: boolean; error?: string }> {
+  const { data, error } = await getSupabase().functions.invoke(
+    "enroll-sorbet-own-freezer",
+    { body: { public_code: publicCode } }
+  );
+  if (error) {
+    console.error("Sorbet own-freezer enroll error:", error);
+    return { ok: false, error: error.message };
+  }
+  const d = (data ?? {}) as { ok?: boolean; error?: string };
+  if (d.ok) return { ok: true };
+  return { ok: false, error: d.error || "enroll_failed" };
+}
+
 export type SubmitOrderInput = {
   store_id: string;
   stock_level: StockLevel;
