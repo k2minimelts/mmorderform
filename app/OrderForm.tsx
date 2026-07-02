@@ -748,7 +748,7 @@ function StockView(props: StockViewProps) {
                   disabled={enrolling}
                   className="text-sm font-semibold text-brand-pink underline underline-offset-2 hover:opacity-80 disabled:opacity-50"
                 >
-                  {enrolling ? "Enabling…" : "I already have my own −18°C freezer — enable sorbet →"}
+                  {enrolling ? "Enabling… / Activation…" : "I already have my own −18°C freezer — enable sorbet / J'ai déjà mon propre congélateur à −18°C — activer le sorbet →"}
                 </button>
                 {enrollErr && <p className="text-xs text-red-500 mt-1">{enrollErr}</p>}
               </div>
