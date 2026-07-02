@@ -13,6 +13,10 @@ const TEMPLATES: Record<string, Record<string, string>> = {
     en: "Mini Melts Sorbet Freezer Program Agreement.pdf",
     fr: "Mini Melts Sorbet Freezer Program Agreement FR.pdf",
   },
+  pad: {
+    en: "MiniMelts-PAD-Agreement-EN 2026.pdf",
+    fr: "MiniMelts-PAD-Agreement-FR 2026.pdf",
+  },
 };
 const templateUrl = (program: string, lang: string) =>
   `https://orders.minimelts.ca/agreements/${encodeURIComponent(
@@ -60,6 +64,18 @@ const T: Record<string, Record<string, string>> = {
     perOrder: "per order",
     perYear: "per year",
     perMonth: "month",
+    progPad: "Pre-Authorized Debit (PAD)",
+    bankHeading: "Banking details",
+    padNote: "Your banking details are encrypted and stored securely. No debit will exceed $2,500.",
+    acctHolder: "Account holder name",
+    fiName: "Financial institution name",
+    transit: "Transit number (5 digits)",
+    institution: "Institution number (3 digits)",
+    account: "Account number",
+    acctType: "Account type",
+    chk: "Chequing",
+    sav: "Savings",
+    ackAuthorize: "I authorize Mini Melts to debit this account for amounts owing on my Mini Melts account, per the PAD agreement above (variable business PAD, Payments Canada Rule H1).",
   },
   fr: {
     title: "Consultez et signez votre entente de congélateur",
@@ -101,6 +117,18 @@ const T: Record<string, Record<string, string>> = {
     perOrder: "par commande",
     perYear: "par année",
     perMonth: "mois",
+    progPad: "Débit préautorisé (DPA)",
+    bankHeading: "Renseignements bancaires",
+    padNote: "Vos renseignements bancaires sont chiffrés et stockés de façon sécurisée. Aucun débit ne dépassera 2 500 $.",
+    acctHolder: "Nom du titulaire du compte",
+    fiName: "Nom de l’institution financière",
+    transit: "Numéro de transit (5 chiffres)",
+    institution: "Numéro d’institution (3 chiffres)",
+    account: "Numéro de compte",
+    acctType: "Type de compte",
+    chk: "Chèques",
+    sav: "Épargne",
+    ackAuthorize: "J’autorise Mini Melts à débiter ce compte pour les montants dus à mon compte Mini Melts, conformément à l’entente de DPA ci-dessus (DPA d’entreprise à montant variable, Règle H1 de Paiements Canada).",
   },
 };
 
@@ -113,6 +141,21 @@ function money(n: unknown, lang: string): string {
 
 function termsLines(program: string, terms: any, lang: string): string[] {
   const t = T[lang];
+  if (program === "pad") {
+    return lang === "fr"
+      ? [
+          "Débit préautorisé d’entreprise (Règle H1 de Paiements Canada)",
+          "Montant variable — chaque débit correspond à votre facture ou bon de livraison Mini Melts",
+          `Maximum de ${money(terms.max_debit, lang)} par débit`,
+          "Annulable en tout temps avec un préavis écrit de 30 jours",
+        ]
+      : [
+          "Business pre-authorized debit (Payments Canada Rule H1)",
+          "Variable amount — each debit matches your Mini Melts invoice or delivery receipt",
+          `Up to ${money(terms.max_debit, lang)} per debit`,
+          "Cancel anytime with 30 days’ written notice",
+        ];
+  }
   const unit = program === "sorbet"
     ? (lang === "fr" ? "caisses" : "cases")
     : (lang === "fr" ? "unités" : "cups");
@@ -279,7 +322,7 @@ export default function SignPage({ token }: { token: string }) {
   }, [token]);
 
   const t = T[lang];
-  const progName = (p: string) => (p === "sorbet" ? t.progSorbet : t.progIce);
+  const progName = (p: string) => (p === "pad" ? t.progPad : p === "sorbet" ? t.progSorbet : t.progIce);
   const agreements = (session?.agreements || []) as any[];
   const pending = agreements.filter((a) => !signedSet.has(a.program));
   const allDone = !!session && agreements.length > 0 && pending.length === 0;
@@ -292,21 +335,43 @@ export default function SignPage({ token }: { token: string }) {
     let anyFail = false;
     for (const a of toSign) {
       try {
-        const res = await fetch(`${FN_BASE}/submit-signature`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            token,
-            program: a.program,
-            signer_name: payload.name,
-            signer_title: payload.title,
-            signature_image: payload.sig,
-            ack_read: payload.read,
-            ack_minimum: payload.minimum,
-            sms_consent: payload.sms,
-            lang,
-          }),
-        });
+        let res: Response;
+        if (a.program === "pad") {
+          res = await fetch(`${FN_BASE}/submit-pad-mandate`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              token,
+              account_holder_name: payload.acctHolder,
+              fi_name: payload.fiName,
+              transit: payload.transit,
+              institution: payload.institution,
+              account: payload.account,
+              account_type: payload.acctType,
+              signer_name: payload.name,
+              signer_title: payload.title,
+              authorized: payload.authorized,
+              signature_image: payload.sig,
+              lang,
+            }),
+          });
+        } else {
+          res = await fetch(`${FN_BASE}/submit-signature`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              token,
+              program: a.program,
+              signer_name: payload.name,
+              signer_title: payload.title,
+              signature_image: payload.sig,
+              ack_read: payload.read,
+              ack_minimum: payload.minimum,
+              sms_consent: payload.sms,
+              lang,
+            }),
+          });
+        }
         const data = await res.json();
         if (data && (data.ok || data.error === "already_signed")) {
           setSignedSet((prev) => {
@@ -389,9 +454,10 @@ export default function SignPage({ token }: { token: string }) {
             <SigningSection
               t={t}
               count={pending.length}
+              hasPad={pending.some((a) => a.program === "pad")}
               busy={busy}
               err={globalErr}
-              defaults={{ name: r.contact_name || "", title: r.applicant_title || "" }}
+              defaults={{ name: r.contact_name || "", title: r.applicant_title || "", legalName: r.legal_name || "" }}
               onSign={signAll}
             />
           )}
@@ -410,15 +476,27 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-function SigningSection({ t, count, busy, err, defaults, onSign }: any) {
+function SigningSection({ t, count, hasPad, busy, err, defaults, onSign }: any) {
   const [name, setName] = useState(defaults.name || "");
   const [title, setTitle] = useState(defaults.title || "");
   const [read, setRead] = useState(false);
   const [minimum, setMinimum] = useState(false);
   const [sms, setSms] = useState(false);
   const [sig, setSig] = useState<string | null>(null);
+  // PAD-only fields (rendered only when a pad agreement is pending)
+  const [acctHolder, setAcctHolder] = useState(defaults.legalName || "");
+  const [fiName, setFiName] = useState("");
+  const [transit, setTransit] = useState("");
+  const [institution, setInstitution] = useState("");
+  const [account, setAccount] = useState("");
+  const [acctType, setAcctType] = useState("CHK");
+  const [authorized, setAuthorized] = useState(false);
   const pad = useSignaturePad(setSig);
-  const canSign = !!name.trim() && read && minimum && !!sig && !busy;
+
+  const bankOk =
+    /^\d{5}$/.test(transit) && /^\d{3}$/.test(institution) && /^\d{4,17}$/.test(account);
+  const padOk = !hasPad || (bankOk && authorized);
+  const canSign = !!name.trim() && read && minimum && !!sig && padOk && !busy;
   const many = count > 1;
 
   return (
@@ -438,6 +516,47 @@ function SigningSection({ t, count, busy, err, defaults, onSign }: any) {
         <input type="checkbox" checked={sms} onChange={(e) => setSms(e.target.checked)} />
         <span>{t.ackSms}</span>
       </label>
+
+      {hasPad && (
+        <div className="mm-bank">
+          <div className="mm-bank-title">{t.bankHeading}</div>
+          <div className="mm-muted" style={{ marginTop: 0, marginBottom: 10 }}>{t.padNote}</div>
+          <div className="mm-field">
+            <label>{t.acctHolder}</label>
+            <input className="mm-input" value={acctHolder} onChange={(e) => setAcctHolder(e.target.value)} />
+          </div>
+          <div className="mm-field">
+            <label>{t.fiName}</label>
+            <input className="mm-input" value={fiName} onChange={(e) => setFiName(e.target.value)} />
+          </div>
+          <div className="mm-field">
+            <label>{t.transit}</label>
+            <input className="mm-input" inputMode="numeric" maxLength={5} value={transit}
+              onChange={(e) => setTransit(e.target.value.replace(/\D/g, ""))} />
+          </div>
+          <div className="mm-field">
+            <label>{t.institution}</label>
+            <input className="mm-input" inputMode="numeric" maxLength={3} value={institution}
+              onChange={(e) => setInstitution(e.target.value.replace(/\D/g, ""))} />
+          </div>
+          <div className="mm-field">
+            <label>{t.account}</label>
+            <input className="mm-input" inputMode="numeric" value={account}
+              onChange={(e) => setAccount(e.target.value.replace(/\D/g, ""))} />
+          </div>
+          <div className="mm-field">
+            <label>{t.acctType}</label>
+            <select className="mm-input" value={acctType} onChange={(e) => setAcctType(e.target.value)}>
+              <option value="CHK">{t.chk}</option>
+              <option value="SAV">{t.sav}</option>
+            </select>
+          </div>
+          <label className="mm-check-row">
+            <input type="checkbox" checked={authorized} onChange={(e) => setAuthorized(e.target.checked)} />
+            <span>{t.ackAuthorize}</span>
+          </label>
+        </div>
+      )}
 
       <div className="mm-field">
         <label>{t.name}</label>
@@ -471,7 +590,13 @@ function SigningSection({ t, count, busy, err, defaults, onSign }: any) {
       <button
         className="mm-btn"
         disabled={!canSign}
-        onClick={() => onSign({ name: name.trim(), title: title.trim(), read, minimum, sms, sig })}
+        onClick={() =>
+          onSign({
+            name: name.trim(), title: title.trim(), read, minimum, sms, sig,
+            acctHolder: acctHolder.trim(), fiName: fiName.trim(),
+            transit, institution, account, acctType, authorized,
+          })
+        }
       >
         {busy ? t.signing : many ? t.signPlural : t.sign}
       </button>
@@ -520,5 +645,5 @@ const CSS = `
 .mm-success h2{color:#34b3c4;margin:0 0 8px}
 .mm-center{text-align:center;padding:60px 16px;color:#7a8488}
 .mm-invalid{text-align:center}
-.mm-invalid h2{color:#ef5a9c;margin:0 0 8px}
+.mm-invalid h2{color:#ef5a9c;margin:0 0 8px}\n.mm-bank{border:1px solid #e6eaec;border-radius:12px;padding:14px;margin:14px 0;background:#fbfcfc}\n.mm-bank-title{font-size:14px;font-weight:700;color:#34b3c4;margin-bottom:4px}
 `;
