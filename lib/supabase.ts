@@ -48,19 +48,23 @@ export type StockLevel = "empty" | "almost_empty" | "half" | "three_quarter";
 // The DB enum `order_stock_level` now contains all 5 values.
 export type SorbetStockLevel = StockLevel | "own_freezer";
 
+// Backed by the lookup_store_by_code RPC (SECURITY DEFINER) so the public anon
+// client can resolve ONE store without holding blanket SELECT on the
+// store_public_info view — that grant allowed enumerating contact details for
+// every store. Same pattern as lookup_stores_by_email / store_has_open_order.
+// The RPC returns the identical column shape as the view, so StorePublicInfo is
+// unchanged; it just arrives as a 0-or-1 row array.
 export async function lookupStoreByCode(code: string): Promise<StorePublicInfo | null> {
   const normalized = code.trim().toUpperCase();
   const { data, error } = await getSupabase()
-    .from("store_public_info")
-    .select("*")
-    .eq("public_code", normalized)
-    .maybeSingle();
+    .rpc("lookup_store_by_code", { p_code: normalized });
 
   if (error) {
     console.error("Store lookup error:", error);
     return null;
   }
-  return data as StorePublicInfo | null;
+  const rows = (data as StorePublicInfo[] | null) || [];
+  return rows.length > 0 ? rows[0] : null;
 }
 
 export async function lookupStoresByEmail(email: string): Promise<StoreLookupResult[]> {
