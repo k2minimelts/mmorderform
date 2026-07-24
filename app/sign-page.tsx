@@ -455,6 +455,7 @@ export default function SignPage({ token }: { token: string }) {
               t={t}
               count={pending.length}
               hasPad={pending.some((a) => a.program === "pad")}
+              isLead={session?.session_type !== "store"}
               busy={busy}
               err={globalErr}
               defaults={{ name: r.contact_name || "", title: r.applicant_title || "", legalName: r.legal_name || "" }}
@@ -476,7 +477,7 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-function SigningSection({ t, count, hasPad, busy, err, defaults, onSign }: any) {
+function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, onSign }: any) {
   const [name, setName] = useState(defaults.name || "");
   const [title, setTitle] = useState(defaults.title || "");
   const [read, setRead] = useState(false);
@@ -496,7 +497,10 @@ function SigningSection({ t, count, hasPad, busy, err, defaults, onSign }: any) 
   const bankOk =
     /^\d{5}$/.test(transit) && /^\d{3}$/.test(institution) && /^\d{4,17}$/.test(account);
   const padOk = !hasPad || (bankOk && authorized);
-  const canSign = !!name.trim() && read && minimum && !!sig && padOk && !busy;
+  // The minimum-purchase ack is only required when it is rendered (lead
+  // sessions). Store PAD conversions never see it, so requiring it would
+  // leave the button permanently disabled.
+  const canSign = !!name.trim() && read && (!isLead || minimum) && !!sig && padOk && !busy;
   const many = count > 1;
 
   return (
@@ -508,14 +512,18 @@ function SigningSection({ t, count, hasPad, busy, err, defaults, onSign }: any) 
         <input type="checkbox" checked={read} onChange={(e) => setRead(e.target.checked)} />
         <span>{t.ackRead}</span>
       </label>
-      <label className="mm-check-row">
-        <input type="checkbox" checked={minimum} onChange={(e) => setMinimum(e.target.checked)} />
-        <span>{t.ackMin}</span>
-      </label>
-      <label className="mm-check-row">
-        <input type="checkbox" checked={sms} onChange={(e) => setSms(e.target.checked)} />
-        <span>{t.ackSms}</span>
-      </label>
+      {isLead && (
+        <>
+          <label className="mm-check-row">
+            <input type="checkbox" checked={minimum} onChange={(e) => setMinimum(e.target.checked)} />
+            <span>{t.ackMin}</span>
+          </label>
+          <label className="mm-check-row">
+            <input type="checkbox" checked={sms} onChange={(e) => setSms(e.target.checked)} />
+            <span>{t.ackSms}</span>
+          </label>
+        </>
+      )}
 
       {hasPad && (
         <div className="mm-bank">
