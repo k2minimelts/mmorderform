@@ -167,7 +167,12 @@ function OrderFormInner() {
   }
 
   async function handleSubmit() {
-    if (!store || !stockLevel) return;
+    if (!store) return;
+    const sorbetOnly = !!store.sorbet_only;
+    // Ice cream stock is required for normal stores; sorbet-only stores have
+    // no ice cream, so they instead require a sorbet stock level.
+    if (!sorbetOnly && !stockLevel) return;
+    if (sorbetOnly && !sorbetStockLevel) return;
     // If the customer said yes to sorbet, they must pick a sorbet stock level.
     // The Place Order button is also disabled in this case, so this is a
     // belt-and-suspenders guard.
@@ -176,10 +181,12 @@ function OrderFormInner() {
     // Sorbet is only allowed for stores enrolled in the sorbet program (they
     // have the separate -18C freezer). Guard here so a non-enrolled store can
     // never submit a sorbet order even if UI state drifts.
-    const sorbetOk = !!store.sorbet_enrolled && includesSorbet;
+    // Sorbet-only stores always submit a sorbet order with no ice cream stock.
+    // Everyone else uses the existing ice-cream + optional-sorbet path.
+    const sorbetOk = !!store.sorbet_enrolled && (sorbetOnly || includesSorbet);
     const result = await submitOrder({
       store_id: store.id,
-      stock_level: stockLevel,
+      stock_level: sorbetOnly ? null : stockLevel,
       notes: notes.trim() || null,
       submitted_by_name: contactName.trim(),
       submitted_by_phone: contactPhone.trim() || null,
@@ -311,6 +318,7 @@ function OrderFormInner() {
         stockLevel={stockLevel}
         setStockLevel={setStockLevel}
         sorbetEnrolled={!!store!.sorbet_enrolled}
+        sorbetOnly={!!store!.sorbet_only}
         storeCode={store!.public_code}
         includesSorbet={includesSorbet}
         setIncludesSorbet={(v) => {
@@ -568,6 +576,7 @@ type StockViewProps = {
   stockLevel: StockLevel | null;
   setStockLevel: (s: StockLevel) => void;
   sorbetEnrolled: boolean;
+  sorbetOnly: boolean;
   storeCode: string;
   includesSorbet: boolean;
   setIncludesSorbet: (v: boolean) => void;
@@ -583,16 +592,18 @@ type StockViewProps = {
 function StockView(props: StockViewProps) {
   const {
     stockLevel, setStockLevel,
-    sorbetEnrolled, storeCode,
+    sorbetEnrolled, sorbetOnly, storeCode,
     includesSorbet, setIncludesSorbet,
     sorbetStockLevel, setSorbetStockLevel,
     notes, setNotes,
     onBack, onSubmit, onSorbetEnrolled,
   } = props;
 
-  // Submit allowed only when ice cream stock is picked AND (sorbet not
-  // requested OR sorbet stock is picked).
-  const canSubmit = !!stockLevel && (!includesSorbet || !!sorbetStockLevel);
+  // Normal stores: ice cream stock required, plus sorbet stock if sorbet added.
+  // Sorbet-only stores: only the sorbet stock level is required.
+  const canSubmit = sorbetOnly
+    ? !!sorbetStockLevel
+    : !!stockLevel && (!includesSorbet || !!sorbetStockLevel);
 
   // Self-serve BYO sorbet (Option B): the store already has their own -18°C
   // freezer, so enable sorbet instantly — no agreement, no Mini Melts freezer.
@@ -615,40 +626,75 @@ function StockView(props: StockViewProps) {
           Step 2 of 2 / &Eacute;tape 2 de 2
         </div>
         <h1 className="text-xl font-bold text-gray-900 mb-1">
-          How full is your ice cream freezer?
+          {sorbetOnly
+            ? "How full is your sorbet freezer?"
+            : "How full is your ice cream freezer?"}
         </h1>
         <div className="text-sm text-gray-500 mb-4">
-          Quel est le niveau de votre cong&eacute;lateur de cr&egrave;me glac&eacute;e?
+          {sorbetOnly
+            ? "Quel est le niveau de votre cong\u00E9lateur de sorbet?"
+            : "Quel est le niveau de votre cong\u00E9lateur de cr\u00E8me glac\u00E9e?"}
         </div>
         <p className="text-xs text-gray-500 mb-5">
           Minimum order: 180 cups / Commande minimum : 180 unit&eacute;s
         </p>
 
-        <div className="grid grid-cols-2 gap-3 mb-5">
-          {STOCK_OPTIONS.map((opt) => {
-            const selected = stockLevel === opt.value;
-            return (
-              <button
-                key={opt.value}
-                onClick={() => setStockLevel(opt.value)}
-                className={
-                  "rounded-xl p-4 border-2 transition text-left " +
-                  (selected
-                    ? "border-brand-pink bg-pink-50"
-                    : "border-gray-200 bg-white hover:border-gray-300")
-                }
-              >
-                <div className="text-3xl mb-2">{opt.icon}</div>
-                <div className="font-semibold text-gray-900 text-sm">{opt.en}</div>
-                <div className="text-xs text-gray-500">{opt.fr}</div>
-              </button>
-            );
-          })}
-        </div>
+        {/* Ice cream stock: hidden for sorbet-only stores (they sell no ice cream). */}
+        {!sorbetOnly && (
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            {STOCK_OPTIONS.map((opt) => {
+              const selected = stockLevel === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => setStockLevel(opt.value)}
+                  className={
+                    "rounded-xl p-4 border-2 transition text-left " +
+                    (selected
+                      ? "border-brand-pink bg-pink-50"
+                      : "border-gray-200 bg-white hover:border-gray-300")
+                  }
+                >
+                  <div className="text-3xl mb-2">{opt.icon}</div>
+                  <div className="font-semibold text-gray-900 text-sm">{opt.en}</div>
+                  <div className="text-xs text-gray-500">{opt.fr}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
 
-        {/* Sorbet: only offered to enrolled stores (separate -18C freezer).
-            Non-enrolled stores get an explainer + application link instead. */}
-        {sorbetEnrolled ? (
+        {/* Sorbet-only: direct sorbet stock selector, no ice cream, no application. */}
+        {sorbetOnly && (
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            {SORBET_STOCK_OPTIONS.map((opt) => {
+              const selected = sorbetStockLevel === opt.value;
+              const isFullWidth = opt.value === "own_freezer";
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => setSorbetStockLevel(opt.value)}
+                  className={
+                    "rounded-xl p-4 border-2 transition text-left " +
+                    (isFullWidth ? "col-span-2 " : "") +
+                    (selected
+                      ? "border-brand-pink bg-pink-50"
+                      : "border-gray-200 bg-white hover:border-gray-300")
+                  }
+                >
+                  <div className="text-3xl mb-2">{opt.icon}</div>
+                  <div className="font-semibold text-gray-900 text-sm">{opt.en}</div>
+                  <div className="text-xs text-gray-500">{opt.fr}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Sorbet toggle + application: only for NORMAL stores. Sorbet-only
+            stores already have their sorbet stock selector above and are
+            already contracted, so none of this applies to them. */}
+        {!sorbetOnly && (sorbetEnrolled ? (
           <>
             <div className="border-t border-gray-200 pt-5 mb-5">
               <h2 className="text-base font-bold text-gray-900 mb-1">
@@ -757,7 +803,7 @@ function StockView(props: StockViewProps) {
               </p>
             </div>
           </div>
-        )}
+        ))}
 
         <div className="mb-2">
           <label className="block text-sm font-semibold text-gray-700 mb-1.5">
