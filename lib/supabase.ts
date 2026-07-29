@@ -30,7 +30,8 @@ export type StorePublicInfo = {
   province: string | null;
   ship_postal: string | null;
   active: boolean;
-  sorbet_enrolled: boolean; 
+  sorbet_enrolled: boolean;
+  sorbet_only: boolean;
 };
 
 export type StoreLookupResult = {
@@ -116,7 +117,8 @@ export async function enrollSorbetOwnFreezer(
 
 export type SubmitOrderInput = {
   store_id: string;
-  stock_level: StockLevel;
+  // null for sorbet-only stores (no ice cream); the DB column is nullable.
+  stock_level: StockLevel | null;
   notes: string | null;
   submitted_by_name: string;
   submitted_by_phone: string | null;
