@@ -4,6 +4,93 @@ import { useEffect, useRef, useState } from "react";
 
 const FN_BASE = "https://jheqxfkyxewofpnkbayc.supabase.co/functions/v1";
 
+// Canadian financial institution numbers, mirroring the list in
+// submit-pad-mandate. Shown back to the signer as confirmation the moment they
+// finish typing the 3-digit number: typing 004 and seeing "TD Canada Trust"
+// appear is the customer verifying their own entry, which is the only thing
+// that reliably catches a mistyped digit.
+//
+// Credit unions mostly route through a provincial central rather than holding
+// their own number, so a Servus member's cheque reads 829. The labels name the
+// central AND its members, otherwise a credit union customer sees an unfamiliar
+// bank name against their own account and "corrects" a number that was right.
+//
+// NOT authoritative and NOT complete. An unrecognized number shows a warning
+// and still allows submission; the server records it for review. Refusing a
+// customer over a gap in this list would be the worse failure.
+const INSTITUTIONS: Record<string, string> = {
+  "001": "BMO Bank of Montreal",
+  "002": "Scotiabank",
+  "003": "RBC Royal Bank",
+  "004": "TD Canada Trust",
+  "006": "National Bank of Canada",
+  "010": "CIBC",
+  "016": "HSBC Bank Canada",
+  "030": "Canadian Western Bank",
+  "039": "Laurentian Bank of Canada",
+  "219": "ATB Financial",
+  "245": "UBS Bank (Canada)",
+  "260": "Citibank Canada",
+  "270": "JPMorgan Chase Bank",
+  "310": "First Nations Bank of Canada",
+  "320": "Amex Bank of Canada",
+  "338": "Canadian Tire Bank",
+  "340": "ICICI Bank Canada",
+  "343": "Peoples Bank of Canada",
+  "352": "Bank of China (Canada)",
+  "356": "President's Choice Financial",
+  "540": "Manulife Bank of Canada",
+  "614": "Tangerine Bank",
+  "621": "EQ Bank / Equitable Bank",
+  "623": "Wealth One Bank of Canada",
+  "809": "Central 1 \u2014 credit unions",
+  "815": "Desjardins \u2014 caisses populaires",
+  "828": "Central 1 \u2014 credit unions in BC and Ontario",
+  "829": "Alberta Central \u2014 credit unions in Alberta (incl. Servus, Connect First)",
+  "837": "Credit Union Central of Saskatchewan",
+  "839": "Atlantic Central \u2014 credit unions in Atlantic Canada",
+  "879": "Credit Union Central of Manitoba",
+};
+
+// Phone photos of a cheque routinely run 3-8 MB, which would blow the edge
+// function request limit if sent raw. Downscaling to 1600px on the long edge
+// keeps the MICR line comfortably legible for an admin comparing digits while
+// landing the payload around 200-400 KB.
+const VOID_MAX_DIM = 1600;
+const VOID_JPEG_Q = 0.8;
+const VOID_MAX_PDF_BYTES = 4_000_000;
+
+function downscaleImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scale = Math.min(1, VOID_MAX_DIM / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d");
+      if (!ctx) { reject(new Error("no_ctx")); return; }
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(c.toDataURL("image/jpeg", VOID_JPEG_Q));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("bad_image")); };
+    img.src = url;
+  });
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result || ""));
+    fr.onerror = () => reject(new Error("read_failed"));
+    fr.readAsDataURL(file);
+  });
+}
+
 const TEMPLATES: Record<string, Record<string, string>> = {
   ice_cream: {
     en: "Mini Melts Ice Cream Freezer Program Agreement.pdf",
@@ -76,6 +163,18 @@ const T: Record<string, Record<string, string>> = {
     chk: "Chequing",
     sav: "Savings",
     ackAuthorize: "I authorize Mini Melts to debit this account for amounts owing on my Mini Melts account, per the PAD agreement above (variable business PAD, Payments Canada Rule H1).",
+    ackAuthority: "I am authorized to bind this account. If this account requires more than one authorized signatory, all required signatories have consented to this authorization.",
+    locHeading: "Locations covered by this authorization",
+    locNote: "Untick any location that pays from a different bank account \u2014 you can set those up separately with the link sent for each one.",
+    locNone: "Select at least one location.",
+    fiUnknown: "We don\u2019t recognize this institution number. Please double-check it against your VOID cheque \u2014 you can still continue.",
+    voidHeading: "VOID cheque (optional, recommended)",
+    voidNote: "Attaching a VOID cheque or bank confirmation lets us verify the numbers above and prevents a failed or misdirected debit. It is stored securely, never emailed, and deleted once verified.",
+    voidPick: "Choose file or take a photo",
+    voidAttached: "Attached",
+    voidRemove: "Remove",
+    voidTooBig: "That file is too large. Please attach a photo or a PDF under 4 MB.",
+    voidFailed: "We couldn\u2019t read that file. Try a photo instead.",
   },
   fr: {
     title: "Consultez et signez votre entente de congélateur",
@@ -129,6 +228,18 @@ const T: Record<string, Record<string, string>> = {
     chk: "Chèques",
     sav: "Épargne",
     ackAuthorize: "J’autorise Mini Melts à débiter ce compte pour les montants dus à mon compte Mini Melts, conformément à l’entente de DPA ci-dessus (DPA d’entreprise à montant variable, Règle H1 de Paiements Canada).",
+    ackAuthority: "Je suis autoris\u00e9 \u00e0 engager ce compte. Si ce compte exige plus d\u2019un signataire autoris\u00e9, tous les signataires requis ont consenti \u00e0 cette autorisation.",
+    locHeading: "\u00c9tablissements vis\u00e9s par cette autorisation",
+    locNote: "D\u00e9cochez tout \u00e9tablissement qui paie \u00e0 partir d\u2019un autre compte bancaire \u2014 vous pourrez les configurer s\u00e9par\u00e9ment avec le lien envoy\u00e9 pour chacun.",
+    locNone: "S\u00e9lectionnez au moins un \u00e9tablissement.",
+    fiUnknown: "Nous ne reconnaissons pas ce num\u00e9ro d\u2019institution. Veuillez le v\u00e9rifier sur votre ch\u00e8que ANNUL\u00c9 \u2014 vous pouvez tout de m\u00eame continuer.",
+    voidHeading: "Ch\u00e8que ANNUL\u00c9 (facultatif, recommand\u00e9)",
+    voidNote: "Joindre un ch\u00e8que ANNUL\u00c9 ou une confirmation bancaire nous permet de v\u00e9rifier les num\u00e9ros ci-dessus et d\u2019\u00e9viter un d\u00e9bit refus\u00e9 ou mal dirig\u00e9. Le fichier est conserv\u00e9 de fa\u00e7on s\u00e9curitaire, jamais envoy\u00e9 par courriel, et supprim\u00e9 apr\u00e8s v\u00e9rification.",
+    voidPick: "Choisir un fichier ou prendre une photo",
+    voidAttached: "Joint",
+    voidRemove: "Retirer",
+    voidTooBig: "Ce fichier est trop volumineux. Veuillez joindre une photo ou un PDF de moins de 4 Mo.",
+    voidFailed: "Nous n\u2019avons pas pu lire ce fichier. Essayez plut\u00f4t une photo.",
   },
 };
 
@@ -327,6 +438,7 @@ export default function SignPage({ token }: { token: string }) {
   const pending = agreements.filter((a) => !signedSet.has(a.program));
   const allDone = !!session && agreements.length > 0 && pending.length === 0;
   const r = session?.retailer || {};
+  const locations = (session?.locations || []) as any[];
 
   const signAll = async (payload: any) => {
     setBusy(true);
@@ -351,7 +463,17 @@ export default function SignPage({ token }: { token: string }) {
               signer_name: payload.name,
               signer_title: payload.title,
               authorized: payload.authorized,
+              authority_confirmed: payload.authority,
               signature_image: payload.sig,
+              // Optional; omitted entirely rather than sent as null so the
+              // server's data-URL check stays simple.
+              ...(payload.voidImg ? { void_cheque_image: payload.voidImg } : {}),
+              // Grouped signing. The server re-validates every id (open
+              // invitation + shared email) before attaching banking to it, so
+              // this list is a request, not an instruction.
+              ...(payload.storeIds && payload.storeIds.length
+                ? { store_ids: payload.storeIds }
+                : {}),
               lang,
             }),
           });
@@ -459,6 +581,7 @@ export default function SignPage({ token }: { token: string }) {
               busy={busy}
               err={globalErr}
               defaults={{ name: r.contact_name || "", title: r.applicant_title || "", legalName: r.legal_name || "" }}
+              locations={locations}
               onSign={signAll}
             />
           )}
@@ -477,7 +600,7 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, onSign }: any) {
+function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locations, onSign }: any) {
   const [name, setName] = useState(defaults.name || "");
   const [title, setTitle] = useState(defaults.title || "");
   const [read, setRead] = useState(false);
@@ -486,17 +609,64 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, onSign 
   const [sig, setSig] = useState<string | null>(null);
   // PAD-only fields (rendered only when a pad agreement is pending)
   const [acctHolder, setAcctHolder] = useState(defaults.legalName || "");
-  const [fiName, setFiName] = useState("");
   const [transit, setTransit] = useState("");
   const [institution, setInstitution] = useState("");
   const [account, setAccount] = useState("");
   const [acctType, setAcctType] = useState("CHK");
   const [authorized, setAuthorized] = useState(false);
+  // Section 10 of the agreement asks the Payor to confirm signing authority and
+  // that any other required account holders consented. The page never used to
+  // collect it, so the signed copy asserted something nobody was asked.
+  const [authority, setAuthority] = useState(false);
+  // Optional VOID cheque. Held in memory as a data URL and posted with the
+  // mandate; never uploaded separately, never retained by the browser.
+  const [voidImg, setVoidImg] = useState<string | null>(null);
+  const [voidName, setVoidName] = useState("");
+  const [voidErr, setVoidErr] = useState("");
   const pad = useSignaturePad(setSig);
+
+  // Grouped signing. locations[0] is always the invited store; a list of one
+  // means there is nothing to choose and no checklist is rendered. Everything
+  // starts ticked because covering every location is the common case.
+  const locs = (locations || []) as any[];
+  const multiLoc = locs.length > 1;
+  const [selectedIds, setSelectedIds] = useState<string[]>(() => locs.map((l: any) => l.store_id));
+  const toggleLoc = (id: string) =>
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  // Institution confirmation. Only meaningful once all 3 digits are in.
+  const fiKnown = institution.length === 3 && Object.prototype.hasOwnProperty.call(INSTITUTIONS, institution);
+  const fiLabel = fiKnown ? INSTITUTIONS[institution] : "";
+  const fiUnknown = institution.length === 3 && !fiKnown;
+
+  const onVoidPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    setVoidErr("");
+    try {
+      if (f.type === "application/pdf") {
+        if (f.size > VOID_MAX_PDF_BYTES) { setVoidErr(t.voidTooBig); return; }
+        setVoidImg(await fileToDataUrl(f));
+        setVoidName(f.name);
+        return;
+      }
+      // Everything else goes through the canvas, which both shrinks it and
+      // normalizes HEIC/odd formats the browser can decode but the server
+      // would rather not deal with.
+      setVoidImg(await downscaleImage(f));
+      setVoidName(f.name);
+    } catch {
+      setVoidErr(t.voidFailed);
+    }
+  };
 
   const bankOk =
     /^\d{5}$/.test(transit) && /^\d{3}$/.test(institution) && /^\d{4,17}$/.test(account);
-  const padOk = !hasPad || (bankOk && authorized);
+  // An unrecognized institution number is deliberately NOT a blocker: the list
+  // above is incomplete, so refusing would turn a gap in our data into a
+  // refused customer. The server flags it for review instead.
+  const locOk = !multiLoc || selectedIds.length > 0;
+  const padOk = !hasPad || (bankOk && authorized && authority && locOk);
   // The minimum-purchase ack is only required when it is rendered (lead
   // sessions). Store PAD conversions never see it, so requiring it would
   // leave the button permanently disabled.
@@ -525,6 +695,28 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, onSign 
         </>
       )}
 
+      {hasPad && multiLoc && (
+        <div className="mm-locs">
+          <div className="mm-bank-title">{t.locHeading}</div>
+          <div className="mm-muted" style={{ marginTop: 0, marginBottom: 10 }}>{t.locNote}</div>
+          {locs.map((l: any) => (
+            <label className="mm-check-row" key={l.store_id}>
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(l.store_id)}
+                onChange={() => toggleLoc(l.store_id)}
+              />
+              <span>
+                {l.name}
+                {l.city ? <span className="mm-loc-sub"> \u2014 {l.city}</span> : null}
+                {l.public_code ? <span className="mm-loc-sub"> ({l.public_code})</span> : null}
+              </span>
+            </label>
+          ))}
+          {selectedIds.length === 0 ? <div className="mm-err">{t.locNone}</div> : null}
+        </div>
+      )}
+
       {hasPad && (
         <div className="mm-bank">
           <div className="mm-bank-title">{t.bankHeading}</div>
@@ -532,10 +724,6 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, onSign 
           <div className="mm-field">
             <label>{t.acctHolder}</label>
             <input className="mm-input" value={acctHolder} onChange={(e) => setAcctHolder(e.target.value)} />
-          </div>
-          <div className="mm-field">
-            <label>{t.fiName}</label>
-            <input className="mm-input" value={fiName} onChange={(e) => setFiName(e.target.value)} />
           </div>
           <div className="mm-field">
             <label>{t.transit}</label>
@@ -546,6 +734,11 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, onSign 
             <label>{t.institution}</label>
             <input className="mm-input" inputMode="numeric" maxLength={3} value={institution}
               onChange={(e) => setInstitution(e.target.value.replace(/\D/g, ""))} />
+            {/* Derived, not typed. Seeing their own bank name appear is the
+                signer confirming their own entry, which is what actually
+                catches a mistyped digit. */}
+            {fiKnown ? <div className="mm-fi-ok">{fiLabel}</div> : null}
+            {fiUnknown ? <div className="mm-fi-warn">{t.fiUnknown}</div> : null}
           </div>
           <div className="mm-field">
             <label>{t.account}</label>
@@ -563,6 +756,38 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, onSign 
             <input type="checkbox" checked={authorized} onChange={(e) => setAuthorized(e.target.checked)} />
             <span>{t.ackAuthorize}</span>
           </label>
+          <label className="mm-check-row">
+            <input type="checkbox" checked={authority} onChange={(e) => setAuthority(e.target.checked)} />
+            <span>{t.ackAuthority}</span>
+          </label>
+
+          <div className="mm-void">
+            <div className="mm-bank-title">{t.voidHeading}</div>
+            <div className="mm-muted" style={{ marginTop: 0, marginBottom: 10 }}>{t.voidNote}</div>
+            {voidImg ? (
+              <div className="mm-void-has">
+                <span>{t.voidAttached}: {voidName}</span>
+                <button
+                  type="button"
+                  className="mm-clear"
+                  onClick={() => { setVoidImg(null); setVoidName(""); setVoidErr(""); }}
+                >
+                  {t.voidRemove}
+                </button>
+              </div>
+            ) : (
+              <label className="mm-void-pick">
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={onVoidPick}
+                  style={{ display: "none" }}
+                />
+                <span>{t.voidPick}</span>
+              </label>
+            )}
+            {voidErr ? <div className="mm-err">{voidErr}</div> : null}
+          </div>
         </div>
       )}
 
@@ -601,8 +826,10 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, onSign 
         onClick={() =>
           onSign({
             name: name.trim(), title: title.trim(), read, minimum, sms, sig,
-            acctHolder: acctHolder.trim(), fiName: fiName.trim(),
+            acctHolder: acctHolder.trim(), fiName: fiLabel,
             transit, institution, account, acctType, authorized,
+            authority, voidImg,
+            storeIds: multiLoc ? selectedIds : locs.map((l: any) => l.store_id),
           })
         }
       >
@@ -613,6 +840,15 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, onSign 
 }
 
 const CSS = `
+.mm-locs{border:1px solid #e6e8ee;border-radius:10px;padding:14px;margin:14px 0}
+.mm-loc-sub{color:#6b7280;font-weight:400}
+.mm-fi-ok{margin-top:6px;font-size:13px;color:#177245;font-weight:600}
+.mm-fi-warn{margin-top:6px;font-size:13px;color:#9a6700;line-height:1.4}
+.mm-void{margin-top:14px;padding-top:14px;border-top:1px solid #e6e8ee}
+.mm-void-pick{display:inline-block;padding:10px 14px;border:1px dashed #b9bfcc;border-radius:8px;cursor:pointer;font-size:14px;color:#34495e}
+.mm-void-pick:hover{border-color:#34b3c4;color:#34b3c4}
+.mm-void-has{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:14px;background:#f6f8fa;border-radius:8px;padding:10px 12px}
+
 .mm-wrap{max-width:640px;margin:0 auto;padding:24px 16px 64px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a}
 .mm-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:6px}
 .mm-brand{font-weight:800;font-size:20px;color:#ef5a9c;letter-spacing:.3px}
