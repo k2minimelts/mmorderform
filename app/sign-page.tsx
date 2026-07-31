@@ -4,53 +4,19 @@ import { useEffect, useRef, useState } from "react";
 
 const FN_BASE = "https://jheqxfkyxewofpnkbayc.supabase.co/functions/v1";
 
-// Canadian financial institution numbers, mirroring the list in
-// submit-pad-mandate. Shown back to the signer as confirmation the moment they
-// finish typing the 3-digit number: typing 004 and seeing "TD Canada Trust"
-// appear is the customer verifying their own entry, which is the only thing
-// that reliably catches a mistyped digit.
+// Institution names are fetched from the server, not hardcoded here.
 //
-// Credit unions mostly route through a provincial central rather than holding
-// their own number, so a Servus member's cheque reads 829. The labels name the
-// central AND its members, otherwise a credit union customer sees an unfamiliar
-// bank name against their own account and "corrects" a number that was right.
+// This file previously carried its own copy of the list, compiled from memory.
+// Checking it against Payments Canada's members directory found five wrong
+// entries -- 829 was labelled "Alberta Central (incl. Servus, Connect First)"
+// when 829 is Caisse Desjardins Ontario, so a Desjardins customer entering
+// their correct number was shown a bank in another province and might
+// reasonably have "corrected" a right number to a wrong one.
 //
-// NOT authoritative and NOT complete. An unrecognized number shows a warning
-// and still allows submission; the server records it for review. Refusing a
-// customer over a gap in this list would be the worse failure.
-const INSTITUTIONS: Record<string, string> = {
-  "001": "BMO Bank of Montreal",
-  "002": "Scotiabank",
-  "003": "RBC Royal Bank",
-  "004": "TD Canada Trust",
-  "006": "National Bank of Canada",
-  "010": "CIBC",
-  "016": "HSBC Bank Canada",
-  "030": "Canadian Western Bank",
-  "039": "Laurentian Bank of Canada",
-  "219": "ATB Financial",
-  "245": "UBS Bank (Canada)",
-  "260": "Citibank Canada",
-  "270": "JPMorgan Chase Bank",
-  "310": "First Nations Bank of Canada",
-  "320": "Amex Bank of Canada",
-  "338": "Canadian Tire Bank",
-  "340": "ICICI Bank Canada",
-  "343": "Peoples Bank of Canada",
-  "352": "Bank of China (Canada)",
-  "356": "President's Choice Financial",
-  "540": "Manulife Bank of Canada",
-  "614": "Tangerine Bank",
-  "621": "EQ Bank / Equitable Bank",
-  "623": "Wealth One Bank of Canada",
-  "809": "Central 1 \u2014 credit unions",
-  "815": "Desjardins \u2014 caisses populaires",
-  "828": "Central 1 \u2014 credit unions in BC and Ontario",
-  "829": "Alberta Central \u2014 credit unions in Alberta (incl. Servus, Connect First)",
-  "837": "Credit Union Central of Saskatchewan",
-  "839": "Atlantic Central \u2014 credit unions in Atlantic Canada",
-  "879": "Credit Union Central of Manitoba",
-};
+// list_financial_institutions() returns number + display label only, with
+// internal annotations filtered server-side. Fetching also means an admin can
+// add a missing institution without this page being redeployed -- which matters
+// during the conversion campaign, when gaps surface as customers hit them.
 
 // Phone photos of a cheque routinely run 3-8 MB, which would blow the edge
 // function request limit if sent raw. Downscaling to 1600px on the long edge
@@ -439,6 +405,9 @@ export default function SignPage({ token }: { token: string }) {
   const allDone = !!session && agreements.length > 0 && pending.length === 0;
   const r = session?.retailer || {};
   const locations = (session?.locations || []) as any[];
+  // number -> display label, filtered server-side so internal annotations
+  // ("Alternate to 869", conflict notes) never reach a customer.
+  const institutionMap = (session?.institutions || {}) as Record<string, string>;
 
   const signAll = async (payload: any) => {
     setBusy(true);
@@ -582,6 +551,7 @@ export default function SignPage({ token }: { token: string }) {
               err={globalErr}
               defaults={{ name: r.contact_name || "", title: r.applicant_title || "", legalName: r.legal_name || "" }}
               locations={locations}
+              instMap={institutionMap}
               onSign={signAll}
             />
           )}
@@ -600,7 +570,7 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locations, onSign }: any) {
+function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locations, instMap, onSign }: any) {
   const [name, setName] = useState(defaults.name || "");
   const [title, setTitle] = useState(defaults.title || "");
   const [read, setRead] = useState(false);
@@ -635,9 +605,17 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locatio
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   // Institution confirmation. Only meaningful once all 3 digits are in.
-  const fiKnown = institution.length === 3 && Object.prototype.hasOwnProperty.call(INSTITUTIONS, institution);
-  const fiLabel = fiKnown ? INSTITUTIONS[institution] : "";
-  const fiUnknown = institution.length === 3 && !fiKnown;
+  // Supplied by get-signing-session. This page talks only to edge functions --
+  // no Supabase client, no anon key in the customer-facing bundle -- so the
+  // institution list arrives with the session rather than from a separate call.
+  const institutions: Record<string, string> = instMap || {};
+  // While the list is still loading, say nothing rather than warn: showing
+  // "we don't recognize this" because the session hasn't returned yet would be
+  // alarming and wrong.
+  const fiLoaded = Object.keys(institutions).length > 0;
+  const fiKnown = institution.length === 3 && !!institutions[institution];
+  const fiLabel = fiKnown ? institutions[institution] : "";
+  const fiUnknown = fiLoaded && institution.length === 3 && !fiKnown;
 
   const onVoidPick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files && e.target.files[0];
