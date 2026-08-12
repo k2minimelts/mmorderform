@@ -133,9 +133,10 @@ const T: Record<string, Record<string, string>> = {
     locHeading: "Locations covered by this authorization",
     locNote: "Untick any location that pays from a different bank account \u2014 you can set those up separately with the link sent for each one.",
     locNone: "Select at least one location.",
-    fiUnknown: "We don\u2019t recognize this institution number. Please double-check it against your VOID cheque \u2014 you can still continue.",
-    voidHeading: "VOID cheque (optional, recommended)",
-    voidNote: "Attaching a VOID cheque or bank confirmation lets us verify the numbers above and prevents a failed or misdirected debit. It is stored securely, never emailed, and deleted once verified.",
+    fiUnknown: "We don\u2019t recognize this institution number.",
+    fiConfirm: "I have checked this institution number against my VOID cheque or bank statement and it is correct.",
+    voidHeading: "VOID cheque (optional, but it prevents failed payments)",
+    voidNote: "If you attach a VOID cheque or bank confirmation, we check your details against it before the first payment \u2014 so a mistyped digit is caught by us rather than by a rejected debit. Stored securely, never emailed, and deleted once checked.",
     voidPick: "Choose file or take a photo",
     voidAttached: "Attached",
     voidRemove: "Remove",
@@ -198,9 +199,10 @@ const T: Record<string, Record<string, string>> = {
     locHeading: "\u00c9tablissements vis\u00e9s par cette autorisation",
     locNote: "D\u00e9cochez tout \u00e9tablissement qui paie \u00e0 partir d\u2019un autre compte bancaire \u2014 vous pourrez les configurer s\u00e9par\u00e9ment avec le lien envoy\u00e9 pour chacun.",
     locNone: "S\u00e9lectionnez au moins un \u00e9tablissement.",
-    fiUnknown: "Nous ne reconnaissons pas ce num\u00e9ro d\u2019institution. Veuillez le v\u00e9rifier sur votre ch\u00e8que ANNUL\u00c9 \u2014 vous pouvez tout de m\u00eame continuer.",
-    voidHeading: "Ch\u00e8que ANNUL\u00c9 (facultatif, recommand\u00e9)",
-    voidNote: "Joindre un ch\u00e8que ANNUL\u00c9 ou une confirmation bancaire nous permet de v\u00e9rifier les num\u00e9ros ci-dessus et d\u2019\u00e9viter un d\u00e9bit refus\u00e9 ou mal dirig\u00e9. Le fichier est conserv\u00e9 de fa\u00e7on s\u00e9curitaire, jamais envoy\u00e9 par courriel, et supprim\u00e9 apr\u00e8s v\u00e9rification.",
+    fiUnknown: "Nous ne reconnaissons pas ce num\u00e9ro d\u2019institution.",
+    fiConfirm: "J\u2019ai v\u00e9rifi\u00e9 ce num\u00e9ro d\u2019institution sur mon ch\u00e8que ANNUL\u00c9 ou mon relev\u00e9 bancaire et il est exact.",
+    voidHeading: "Ch\u00e8que ANNUL\u00c9 (facultatif, mais \u00e9vite les paiements refus\u00e9s)",
+    voidNote: "Si vous joignez un ch\u00e8que ANNUL\u00c9 ou une confirmation bancaire, nous v\u00e9rifions vos renseignements avant le premier paiement \u2014 un chiffre mal saisi est ainsi d\u00e9tect\u00e9 par nous plut\u00f4t que par un d\u00e9bit refus\u00e9. Conserv\u00e9 de fa\u00e7on s\u00e9curitaire, jamais envoy\u00e9 par courriel, et supprim\u00e9 apr\u00e8s v\u00e9rification.",
     voidPick: "Choisir un fichier ou prendre une photo",
     voidAttached: "Joint",
     voidRemove: "Retirer",
@@ -588,6 +590,11 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locatio
   // that any other required account holders consented. The page never used to
   // collect it, so the signed copy asserted something nobody was asked.
   const [authority, setAuthority] = useState(false);
+  // Deliberate confirmation when the institution number is not one we know.
+  // ST-1665 typed 216 instead of 219 (ATB), saw the amber warning, scrolled
+  // past it, and the payment bounced. A notice that can be ignored is not a
+  // control; this makes them assert the number rather than skip past it.
+  const [fiConfirmed, setFiConfirmed] = useState(false);
   // Optional VOID cheque. Held in memory as a data URL and posted with the
   // mandate; never uploaded separately, never retained by the browser.
   const [voidImg, setVoidImg] = useState<string | null>(null);
@@ -644,7 +651,10 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locatio
   // above is incomplete, so refusing would turn a gap in our data into a
   // refused customer. The server flags it for review instead.
   const locOk = !multiLoc || selectedIds.length > 0;
-  const padOk = !hasPad || (bankOk && authorized && authority && locOk);
+  // An unrecognized institution must be explicitly confirmed. Recognized
+  // numbers -- the overwhelming majority -- are unaffected.
+  const fiOk = !fiUnknown || fiConfirmed;
+  const padOk = !hasPad || (bankOk && authorized && authority && locOk && fiOk);
   // The minimum-purchase ack is only required when it is rendered (lead
   // sessions). Store PAD conversions never see it, so requiring it would
   // leave the button permanently disabled.
@@ -711,12 +721,21 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locatio
           <div className="mm-field">
             <label>{t.institution}</label>
             <input className="mm-input" inputMode="numeric" maxLength={3} value={institution}
-              onChange={(e) => setInstitution(e.target.value.replace(/\D/g, ""))} />
+              onChange={(e) => { setInstitution(e.target.value.replace(/\D/g, "")); setFiConfirmed(false); }} />
             {/* Derived, not typed. Seeing their own bank name appear is the
                 signer confirming their own entry, which is what actually
                 catches a mistyped digit. */}
             {fiKnown ? <div className="mm-fi-ok">{fiLabel}</div> : null}
-            {fiUnknown ? <div className="mm-fi-warn">{t.fiUnknown}</div> : null}
+            {fiUnknown ? (
+              <div className="mm-fi-warn">
+                <div>{t.fiUnknown}</div>
+                <label className="mm-check-row" style={{ marginTop: 8, alignItems: "flex-start" }}>
+                  <input type="checkbox" checked={fiConfirmed}
+                    onChange={(e) => setFiConfirmed(e.target.checked)} />
+                  <span>{t.fiConfirm}</span>
+                </label>
+              </div>
+            ) : null}
           </div>
           <div className="mm-field">
             <label>{t.account}</label>
