@@ -8,10 +8,13 @@ import {
   submitOrder,
   hasOpenOrder,
   enrollSorbetOwnFreezer,
+  getStorePadStatus,
+  requestPadLink,
   StorePublicInfo,
   StoreLookupResult,
   StockLevel,
   SorbetStockLevel,
+  PadStatus,
 } from "@/lib/supabase";
 import {
   EmailLookupView,
@@ -77,6 +80,9 @@ function OrderFormInner() {
   const [sorbetStockLevel, setSorbetStockLevel] = useState<SorbetStockLevel | null>(null);
   const [notes, setNotes] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  // October 1 PAD changeover. 'required' only for stores still on COD with no
+  // active mandate — a store that has signed never sees the notice.
+  const [padStatus, setPadStatus] = useState<PadStatus>("ok");
 
   function applyStoreToForm(result: StorePublicInfo) {
     setStore(result);
@@ -92,7 +98,13 @@ function OrderFormInner() {
   // anything in. The DB trigger is the hard guardrail; this is the friendly UX.
   async function routeAfterStoreResolved(result: StorePublicInfo) {
     applyStoreToForm(result);
-    const open = await hasOpenOrder(result.id);
+    // Run both checks together: neither blocks the order today, and doing them
+    // in parallel keeps the step transition as fast as it was before.
+    const [open, pad] = await Promise.all([
+      hasOpenOrder(result.id),
+      getStorePadStatus(result.public_code),
+    ]);
+    setPadStatus(pad);
     setStep(open ? "duplicate_order" : "confirm");
   }
 
@@ -300,6 +312,7 @@ function OrderFormInner() {
     return (
       <ConfirmView
         store={store!}
+        padStatus={padStatus}
         contactName={contactName}
         contactPhone={contactPhone}
         contactEmail={contactEmail}
@@ -457,8 +470,90 @@ function LookupView(props: LookupViewProps) {
   );
 }
 
+// October 1 pre-authorized debit changeover notice.
+//
+// Shown only when get_store_pad_status returns 'required' — a store still on COD
+// with no active mandate. Deliberately worded as a company-wide change ("all
+// customers") rather than something aimed at this store, and it always offers
+// the office as an alternative, because some customers genuinely cannot use PAD.
+//
+// The order still goes through. This is the warning phase; blocking, if it
+// happens, comes after October 1.
+function PadNotice({ storeCode }: { storeCode: string }) {
+  const [state, setState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
+  const [sentTo, setSentTo] = useState<string | null>(null);
+
+  async function handleSend() {
+    setState("sending");
+    const r = await requestPadLink(storeCode);
+    if (r.ok) {
+      setSentTo(r.sentTo ?? null);
+      setState("sent");
+    } else {
+      setState("failed");
+    }
+  }
+
+  return (
+    <div className="bg-amber-50 border border-amber-300 rounded-2xl p-5 mt-4">
+      <div className="font-bold text-amber-900 mb-2">
+        Coming October 1: pre-authorized debit
+      </div>
+      <p className="text-sm text-amber-900 leading-relaxed">
+        As of <strong>October 1, 2026</strong>, Mini Melts is moving all customers to
+        pre-authorized debit. Your invoices will be debited automatically — nothing
+        to pay at the door.
+      </p>
+      <p className="text-sm text-amber-900 leading-relaxed mt-2">
+        If for any reason you are not able to sign up for pre-authorized debit,
+        please contact our office at{" "}
+        <a href="tel:4035371045" className="underline font-semibold">403-537-1045</a>{" "}
+        or{" "}
+        <a href="mailto:billing@minimelts.ca" className="underline font-semibold">
+          billing@minimelts.ca
+        </a>{" "}
+        to arrange an alternative.
+      </p>
+
+      {state === "sent" ? (
+        <p className="text-sm text-green-800 bg-green-50 border border-green-200 rounded-lg p-3 mt-4">
+          Sent. Check {sentTo ? <strong>{sentTo}</strong> : "the email on your account"} for
+          your signing link. It may take a minute to arrive.
+        </p>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={handleSend}
+            disabled={state === "sending"}
+            className="mt-4 w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-semibold rounded-xl py-3"
+          >
+            {state === "sending" ? "Sending\u2026" : "Email me the sign-up link"}
+          </button>
+          {state === "failed" && (
+            <p className="text-sm text-red-700 mt-2">
+              Could not send just now. Please call the office at 403-537-1045.
+            </p>
+          )}
+        </>
+      )}
+
+      <p className="text-xs text-amber-800 mt-3">
+        Le 1<sup>er</sup> octobre 2026, Mini Melts passe au d&eacute;bit pr&eacute;autoris&eacute; pour
+        l&apos;ensemble de sa client&egrave;le. Si vous ne pouvez pas y adh&eacute;rer, communiquez avec
+        notre bureau au 403-537-1045.
+      </p>
+
+      <p className="text-xs text-amber-700 mt-3">
+        You can still place this order as usual.
+      </p>
+    </div>
+  );
+}
+
 type ConfirmViewProps = {
   store: StorePublicInfo;
+  padStatus: PadStatus;
   contactName: string;
   contactPhone: string;
   contactEmail: string;
@@ -472,6 +567,7 @@ type ConfirmViewProps = {
 function ConfirmView(props: ConfirmViewProps) {
   const {
     store,
+    padStatus,
     contactName,
     contactPhone,
     contactEmail,
@@ -486,6 +582,7 @@ function ConfirmView(props: ConfirmViewProps) {
   return (
     <div className="max-w-md mx-auto px-4">
       <Brand />
+      {padStatus === "required" && <PadNotice storeCode={store.public_code} />}
       <div className="bg-white rounded-2xl shadow-sm p-6 mt-4">
         <div className="text-xs text-gray-500 font-semibold uppercase tracking-wide mb-2">
           Step 1 of 2 / &Eacute;tape 1 de 2
