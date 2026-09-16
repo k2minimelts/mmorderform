@@ -95,6 +95,50 @@ export async function hasOpenOrder(storeId: string): Promise<boolean> {
   return data === true;
 }
 
+// PAD status for the order form's October 1 notice.
+//
+// 'required' means this store is still on COD with no active pre-authorized
+// debit mandate. Anything else ('ok') covers stores that have signed, EDI
+// accounts, genuine terms accounts, and any store the office has moved off COD
+// to agree something different — so an exception is granted by changing the
+// store's terms in the dashboard, not by a separate flag.
+//
+// Fails OPEN (returns 'ok'): a transient RPC error must never show a customer a
+// payment warning we are not sure applies to them.
+export type PadStatus = "ok" | "required";
+
+export async function getStorePadStatus(code: string): Promise<PadStatus> {
+  const normalized = code.trim().toUpperCase();
+  const { data, error } = await getSupabase()
+    .rpc("get_store_pad_status", { p_code: normalized });
+  if (error) {
+    console.error("PAD status error:", error);
+    return "ok";
+  }
+  return data === "required" ? "required" : "ok";
+}
+
+// Asks the server to email this store its signing link.
+//
+// The link is never returned to the browser. The order form authenticates only
+// a store code, and that code is printed on every delivery receipt — handing
+// back a signing token would let anyone with a receipt authorize bank debits
+// against the store. The edge function emails it to the address already on the
+// store record instead, so whoever asks must control that mailbox.
+export async function requestPadLink(
+  publicCode: string
+): Promise<{ ok: boolean; sent?: boolean; sentTo?: string | null; throttled?: boolean }> {
+  const { data, error } = await getSupabase().functions.invoke("request-pad-link", {
+    body: { public_code: publicCode.trim().toUpperCase() },
+  });
+  if (error) {
+    console.error("PAD link request error:", error);
+    return { ok: false };
+  }
+  const d = (data ?? {}) as { ok?: boolean; sent?: boolean; sent_to?: string | null; throttled?: boolean };
+  return { ok: d.ok === true, sent: d.sent, sentTo: d.sent_to ?? null, throttled: d.throttled };
+}
+
 // Self-serve BYO sorbet (Option B): flips the store to sorbet-enrolled with
 // their own -18°C freezer — no agreement, no Mini Melts freezer. Calls the
 // enroll-sorbet-own-freezer edge function (public; it performs the service-role
