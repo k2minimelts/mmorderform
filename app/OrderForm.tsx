@@ -934,7 +934,13 @@ function StockView(props: StockViewProps) {
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
             className="w-full border-2 border-gray-200 rounded-lg px-3 py-3 focus:outline-none focus:border-brand-teal transition resize-none"
-            placeholder="e.g., Out of cotton candy / Plus de barbe a papa"
+            /* Cotton candy is an ice cream flavour — a sorbet-only store never
+               sees it, so the example would just confuse them. */
+            placeholder={
+              sorbetOnly
+                ? "e.g., Delivery before noon / Livraison avant midi"
+                : "e.g., Out of cotton candy / Plus de barbe a papa"
+            }
           />
         </div>
 
