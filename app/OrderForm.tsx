@@ -13,7 +13,6 @@ import {
   StorePublicInfo,
   StoreLookupResult,
   StockLevel,
-  SorbetStockLevel,
   PadStatus,
 } from "@/lib/supabase";
 import {
@@ -42,16 +41,34 @@ const STOCK_OPTIONS: { value: StockLevel; en: string; fr: string; icon: string }
   { value: "three_quarter", en: "3/4 full", fr: "3/4 pleine", icon: "\u{1F5C3}\u{FE0F}" },
 ];
 
-// Sorbet stock options: same 4 levels as ice cream PLUS "own_freezer" for
-// customers who sell sorbet from their existing freezer (no Mini Melts sorbet
-// freezer at the store).
-const SORBET_STOCK_OPTIONS: { value: SorbetStockLevel; en: string; fr: string; icon: string }[] = [
-  { value: "empty", en: "Empty", fr: "Vide", icon: "\u{1F4ED}" },
-  { value: "almost_empty", en: "Almost empty", fr: "Presque vide", icon: "\u{1F4E6}" },
-  { value: "half", en: "Half full", fr: "Moiti\u00E9 pleine", icon: "\u{1F5C4}\u{FE0F}" },
-  { value: "three_quarter", en: "3/4 full", fr: "3/4 pleine", icon: "\u{1F5C3}\u{FE0F}" },
-  { value: "own_freezer", en: "I use my own freezer", fr: "J\u2019utilise mon propre cong\u00E9lateur", icon: "\u{1F9CA}" },
-];
+// Sorbet is ordered by the CASE, per flavour — not by freezer fullness. Unlike
+// ice cream (loose DSD, the driver judges the refill), sorbet ships as whole
+// 24-pouch cases and the store knows what sells. These strings must match the
+// driver app's PRODUCTS list exactly so an order line reconciles against the
+// delivery. Product names are brand SKUs and are not translated.
+const SORBET_FLAVOURS = ["BIG Cherry", "BIG Mango", "BIG Kiwi"] as const;
+
+function sorbetTotal(cases: Record<string, number>): number {
+  return SORBET_FLAVOURS.reduce((n, f) => n + (cases[f] || 0), 0);
+}
+
+// The minimum exists so a driver isn't sent out for a token load. It is a
+// property of the ORDER, not the store: an order that also contains ice cream
+// is exempt because the driver is making the trip anyway. Gating on the order
+// shape rather than store.sorbet_only keeps this correct if a both-products
+// store is ever allowed to submit sorbet on its own.
+function sorbetCasesOk(args: {
+  total: number;
+  orderHasIceCream: boolean;
+  minCases: number | null;
+  freezerCases: number | null;
+}): boolean {
+  const { total, orderHasIceCream, minCases, freezerCases } = args;
+  if (total <= 0) return false;
+  if (freezerCases && total > freezerCases) return false;
+  if (!orderHasIceCream && minCases && total < minCases) return false;
+  return true;
+}
 
 // Where non-enrolled stores are sent to sign up for sorbet. Sorbet needs its own
 // -18C freezer (the Mini Melts freezer runs at -35C), so a store must be enrolled
@@ -74,10 +91,11 @@ function OrderFormInner() {
   const [contactPhone, setContactPhone] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [stockLevel, setStockLevel] = useState<StockLevel | null>(null);
-  // Sorbet additions: independent of ice cream stock level. When the customer
-  // says no to sorbet, sorbetStockLevel stays null and we send null to the DB.
+  // Sorbet additions: independent of ice cream stock level. Sorbet is ordered
+  // per flavour in cases; when the customer says no to sorbet the map is reset
+  // to empty and we send null to the DB.
   const [includesSorbet, setIncludesSorbet] = useState<boolean>(false);
-  const [sorbetStockLevel, setSorbetStockLevel] = useState<SorbetStockLevel | null>(null);
+  const [sorbetCases, setSorbetCases] = useState<Record<string, number>>({});
   const [notes, setNotes] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   // October 1 PAD changeover. 'required' only for stores still on COD with no
@@ -181,21 +199,35 @@ function OrderFormInner() {
   async function handleSubmit() {
     if (!store) return;
     const sorbetOnly = !!store.sorbet_only;
-    // Ice cream stock is required for normal stores; sorbet-only stores have
-    // no ice cream, so they instead require a sorbet stock level.
-    if (!sorbetOnly && !stockLevel) return;
-    if (sorbetOnly && !sorbetStockLevel) return;
-    // If the customer said yes to sorbet, they must pick a sorbet stock level.
-    // The Place Order button is also disabled in this case, so this is a
-    // belt-and-suspenders guard.
-    if (includesSorbet && !sorbetStockLevel) return;
+    // A sorbet-only store places an order with no ice cream on it.
+    const orderHasIceCream = !sorbetOnly;
+    if (orderHasIceCream && !stockLevel) return;
+    const wantsSorbet = sorbetOnly || includesSorbet;
+    const total = sorbetTotal(sorbetCases);
+    // Belt-and-suspenders: the Place Order button is disabled on the same
+    // condition, so this only catches state drift.
+    if (
+      wantsSorbet &&
+      !sorbetCasesOk({
+        total,
+        orderHasIceCream,
+        minCases: store.sorbet_min_cases,
+        freezerCases: store.sorbet_freezer_cases,
+      })
+    )
+      return;
     setStep("submitting");
     // Sorbet is only allowed for stores enrolled in the sorbet program (they
     // have the separate -18C freezer). Guard here so a non-enrolled store can
     // never submit a sorbet order even if UI state drifts.
-    // Sorbet-only stores always submit a sorbet order with no ice cream stock.
-    // Everyone else uses the existing ice-cream + optional-sorbet path.
-    const sorbetOk = !!store.sorbet_enrolled && (sorbetOnly || includesSorbet);
+    const sorbetOk = !!store.sorbet_enrolled && wantsSorbet;
+    // Only flavours actually asked for; a zero line is noise for the depot.
+    const sorbetLines = sorbetOk
+      ? SORBET_FLAVOURS.filter((f) => (sorbetCases[f] || 0) > 0).map((f) => ({
+          flavour: f,
+          cases: sorbetCases[f],
+        }))
+      : null;
     const result = await submitOrder({
       store_id: store.id,
       stock_level: sorbetOnly ? null : stockLevel,
@@ -209,9 +241,10 @@ function OrderFormInner() {
         user_agent: typeof navigator !== "undefined" ? navigator.userAgent : "",
       },
       includes_sorbet: sorbetOk,
-      // Force null when sorbet isn't allowed/selected so the DB CHECK constraint
-      // is satisfied regardless of any leftover state from toggling Yes->No.
-      sorbet_stock_level: sorbetOk ? sorbetStockLevel : null,
+      // Sorbet is described by per-flavour cases now, not a fullness level.
+      // Historical rows keep their stock level; new ones always send null.
+      sorbet_stock_level: null,
+      sorbet_lines: sorbetLines,
     });
     if (result.success) {
       setStep("done");
@@ -336,13 +369,14 @@ function OrderFormInner() {
         includesSorbet={includesSorbet}
         setIncludesSorbet={(v) => {
           setIncludesSorbet(v);
-          // When toggling No, clear the sorbet stock so a stale value doesn't
-          // sneak through if the user toggles Yes again later (they should
-          // pick again).
-          if (!v) setSorbetStockLevel(null);
+          // When toggling No, clear the case counts so a stale quantity can't
+          // sneak through if the user toggles Yes again later.
+          if (!v) setSorbetCases({});
         }}
-        sorbetStockLevel={sorbetStockLevel}
-        setSorbetStockLevel={setSorbetStockLevel}
+        sorbetCases={sorbetCases}
+        setSorbetCases={setSorbetCases}
+        minCases={store!.sorbet_min_cases}
+        freezerCases={store!.sorbet_freezer_cases}
         notes={notes}
         setNotes={setNotes}
         onBack={() => setStep("confirm")}
@@ -677,8 +711,10 @@ type StockViewProps = {
   storeCode: string;
   includesSorbet: boolean;
   setIncludesSorbet: (v: boolean) => void;
-  sorbetStockLevel: SorbetStockLevel | null;
-  setSorbetStockLevel: (s: SorbetStockLevel) => void;
+  sorbetCases: Record<string, number>;
+  setSorbetCases: (c: Record<string, number>) => void;
+  minCases: number | null;
+  freezerCases: number | null;
   notes: string;
   setNotes: (v: string) => void;
   onBack: () => void;
@@ -691,16 +727,30 @@ function StockView(props: StockViewProps) {
     stockLevel, setStockLevel,
     sorbetEnrolled, sorbetOnly, storeCode,
     includesSorbet, setIncludesSorbet,
-    sorbetStockLevel, setSorbetStockLevel,
+    sorbetCases, setSorbetCases,
+    minCases, freezerCases,
     notes, setNotes,
     onBack, onSubmit, onSorbetEnrolled,
   } = props;
 
-  // Normal stores: ice cream stock required, plus sorbet stock if sorbet added.
-  // Sorbet-only stores: only the sorbet stock level is required.
-  const canSubmit = sorbetOnly
-    ? !!sorbetStockLevel
-    : !!stockLevel && (!includesSorbet || !!sorbetStockLevel);
+  // Sorbet-only stores place an order with no ice cream on it.
+  const orderHasIceCream = !sorbetOnly;
+  const wantsSorbet = sorbetOnly || includesSorbet;
+  const totalCases = sorbetTotal(sorbetCases);
+  const sorbetValid = sorbetCasesOk({
+    total: totalCases,
+    orderHasIceCream,
+    minCases,
+    freezerCases,
+  });
+  // Normal stores: ice cream stock required, plus valid sorbet cases if added.
+  // Sorbet-only stores: only the sorbet cases matter.
+  const canSubmit = orderHasIceCream
+    ? !!stockLevel && (!includesSorbet || sorbetValid)
+    : sorbetValid;
+
+  const setCases = (flavour: string, n: number) =>
+    setSorbetCases({ ...sorbetCases, [flavour]: Math.max(0, n) });
 
   // Self-serve BYO sorbet (Option B): the store already has their own -18°C
   // freezer, so enable sorbet instantly — no agreement, no Mini Melts freezer.
@@ -724,17 +774,22 @@ function StockView(props: StockViewProps) {
         </div>
         <h1 className="text-xl font-bold text-gray-900 mb-1">
           {sorbetOnly
-            ? "How full is your sorbet freezer?"
+            ? "How many cases of sorbet do you need?"
             : "How full is your ice cream freezer?"}
         </h1>
         <div className="text-sm text-gray-500 mb-4">
           {sorbetOnly
-            ? "Quel est le niveau de votre cong\u00E9lateur de sorbet?"
+            ? "Combien de caisses de sorbet vous faut-il?"
             : "Quel est le niveau de votre cong\u00E9lateur de cr\u00E8me glac\u00E9e?"}
         </div>
-        <p className="text-xs text-gray-500 mb-5">
-          Minimum order: 180 cups / Commande minimum : 180 unit&eacute;s
-        </p>
+        {/* 180 cups is the ICE CREAM reorder minimum and never applied to
+            sorbet, which is ordered in cases. It used to render on both
+            screens. */}
+        {!sorbetOnly && (
+          <p className="text-xs text-gray-500 mb-5">
+            Minimum order: 180 cups / Commande minimum : 180 unit&eacute;s
+          </p>
+        )}
 
         {/* Ice cream stock: hidden for sorbet-only stores (they sell no ice cream). */}
         {!sorbetOnly && (
@@ -761,31 +816,15 @@ function StockView(props: StockViewProps) {
           </div>
         )}
 
-        {/* Sorbet-only: direct sorbet stock selector, no ice cream, no application. */}
+        {/* Sorbet-only: per-flavour cases, no ice cream, no application. */}
         {sorbetOnly && (
-          <div className="grid grid-cols-2 gap-3 mb-5">
-            {SORBET_STOCK_OPTIONS.map((opt) => {
-              const selected = sorbetStockLevel === opt.value;
-              const isFullWidth = opt.value === "own_freezer";
-              return (
-                <button
-                  key={opt.value}
-                  onClick={() => setSorbetStockLevel(opt.value)}
-                  className={
-                    "rounded-xl p-4 border-2 transition text-left " +
-                    (isFullWidth ? "col-span-2 " : "") +
-                    (selected
-                      ? "border-brand-pink bg-pink-50"
-                      : "border-gray-200 bg-white hover:border-gray-300")
-                  }
-                >
-                  <div className="text-3xl mb-2">{opt.icon}</div>
-                  <div className="font-semibold text-gray-900 text-sm">{opt.en}</div>
-                  <div className="text-xs text-gray-500">{opt.fr}</div>
-                </button>
-              );
-            })}
-          </div>
+          <SorbetCasePicker
+            sorbetCases={sorbetCases}
+            setCases={setCases}
+            totalCases={totalCases}
+            minCases={orderHasIceCream ? null : minCases}
+            freezerCases={freezerCases}
+          />
         )}
 
         {/* Sorbet toggle + application: only for NORMAL stores. Sorbet-only
@@ -829,35 +868,19 @@ function StockView(props: StockViewProps) {
             {includesSorbet && (
               <div className="mb-5">
                 <h2 className="text-base font-bold text-gray-900 mb-1">
-                  How much sorbet stock do you have?
+                  How many cases of each flavour?
                 </h2>
                 <div className="text-sm text-gray-500 mb-3">
-                  Quel est votre stock de sorbet?
+                  Combien de caisses de chaque saveur?
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  {SORBET_STOCK_OPTIONS.map((opt) => {
-                    const selected = sorbetStockLevel === opt.value;
-                    // The "own_freezer" option is wider — full row on its own line.
-                    const isFullWidth = opt.value === "own_freezer";
-                    return (
-                      <button
-                        key={opt.value}
-                        onClick={() => setSorbetStockLevel(opt.value)}
-                        className={
-                          "rounded-xl p-4 border-2 transition text-left " +
-                          (isFullWidth ? "col-span-2 " : "") +
-                          (selected
-                            ? "border-brand-pink bg-pink-50"
-                            : "border-gray-200 bg-white hover:border-gray-300")
-                        }
-                      >
-                        <div className="text-3xl mb-2">{opt.icon}</div>
-                        <div className="font-semibold text-gray-900 text-sm">{opt.en}</div>
-                        <div className="text-xs text-gray-500">{opt.fr}</div>
-                      </button>
-                    );
-                  })}
-                </div>
+                <SorbetCasePicker
+                  sorbetCases={sorbetCases}
+                  setCases={setCases}
+                  totalCases={totalCases}
+                  /* Exempt: the driver is already coming for the ice cream. */
+                  minCases={null}
+                  freezerCases={freezerCases}
+                />
               </div>
             )}
           </>
@@ -936,6 +959,82 @@ function StockView(props: StockViewProps) {
   );
 }
 
+type SorbetCasePickerProps = {
+  sorbetCases: Record<string, number>;
+  setCases: (flavour: string, n: number) => void;
+  totalCases: number;
+  // null when no floor applies to this order (ice cream is on it too).
+  minCases: number | null;
+  freezerCases: number | null;
+};
+
+// Per-flavour case steppers. Sorbet ships as whole 24-pouch cases, so the store
+// states quantities outright rather than describing freezer fullness.
+function SorbetCasePicker(props: SorbetCasePickerProps) {
+  const { sorbetCases, setCases, totalCases, minCases, freezerCases } = props;
+  const belowMin = !!minCases && totalCases > 0 && totalCases < minCases;
+  const overCap = !!freezerCases && totalCases > freezerCases;
+
+  return (
+    <div className="mb-5">
+      <div className="rounded-xl border-2 border-gray-200 divide-y divide-gray-100">
+        {SORBET_FLAVOURS.map((flavour) => {
+          const n = sorbetCases[flavour] || 0;
+          return (
+            <div key={flavour} className="flex items-center justify-between p-3">
+              <div>
+                <div className="font-semibold text-gray-900 text-sm">{flavour}</div>
+                <div className="text-xs text-gray-500">
+                  {n > 0 ? `${n * 24} pouches / unit\u00E9s` : "24 per case / par caisse"}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  aria-label={`Remove a case of ${flavour}`}
+                  onClick={() => setCases(flavour, n - 1)}
+                  disabled={n <= 0}
+                  className="w-10 h-10 rounded-lg border-2 border-gray-200 text-lg font-bold text-gray-700 disabled:opacity-30 hover:border-gray-300 transition"
+                >
+                  &minus;
+                </button>
+                <div className="w-10 text-center font-bold text-gray-900 tabular-nums">{n}</div>
+                <button
+                  type="button"
+                  aria-label={`Add a case of ${flavour}`}
+                  onClick={() => setCases(flavour, n + 1)}
+                  className="w-10 h-10 rounded-lg border-2 border-brand-pink text-lg font-bold text-brand-pink hover:bg-pink-50 transition"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-baseline justify-between mt-3">
+        <span className="text-sm font-semibold text-gray-700">Total / Total</span>
+        <span className="font-bold text-gray-900">
+          {totalCases} {totalCases === 1 ? "case / caisse" : "cases / caisses"}
+          <span className="text-gray-400 font-normal text-sm"> ({totalCases * 24})</span>
+        </span>
+      </div>
+
+      {minCases ? (
+        <p className={"text-xs mt-1 " + (belowMin ? "text-red-600 font-semibold" : "text-gray-500")}>
+          Minimum order: {minCases} cases / Commande minimum : {minCases} caisses
+        </p>
+      ) : null}
+      {overCap && freezerCases ? (
+        <p className="text-xs mt-1 text-red-600 font-semibold">
+          Your freezer holds {freezerCases} cases. / Votre cong&eacute;lateur contient {freezerCases} caisses.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 type DoneViewProps = {
   store: StorePublicInfo;
 };
@@ -954,10 +1053,10 @@ function DoneView(props: DoneViewProps) {
           Commande re&ccedil;ue!
         </div>
         <p className="text-gray-700 mb-4">
-          Thanks <span className="font-semibold">{store.name}</span> &mdash; your reorder request has been sent to your local depot. Your driver will contact you to schedule.
+          Thanks <span className="font-semibold">{store.name}</span> &mdash; your reorder request has been sent to your local depot. You&rsquo;ll get an email confirming your delivery date once the depot has it scheduled.
         </p>
         <p className="text-sm text-gray-500 mb-2">
-          Merci &mdash; votre demande a &eacute;t&eacute; envoy&eacute;e &agrave; votre d&eacute;p&ocirc;t local. Votre chauffeur vous contactera.
+          Merci &mdash; votre demande a &eacute;t&eacute; envoy&eacute;e &agrave; votre d&eacute;p&ocirc;t local. Vous recevrez un courriel confirmant la date de livraison une fois la commande planifi&eacute;e par le d&eacute;p&ocirc;t.
         </p>
       </div>
       <Footer />
