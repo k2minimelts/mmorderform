@@ -30,9 +30,15 @@ type Step =
   | "confirm"
   | "stock"
   | "duplicate_order"
+  | "pad_blocked"
   | "submitting"
   | "done"
   | "error";
+
+// get_store_pad_status returns 'ok' | 'required' (warning phase, until the
+// cutover) | 'blocked' (after the cutover). 'blocked' is widened here so this
+// file does not depend on the PadStatus union in lib/supabase.ts being updated.
+type PadGate = PadStatus | "blocked";
 
 const STOCK_OPTIONS: { value: StockLevel; en: string; fr: string; icon: string }[] = [
   { value: "empty", en: "Empty", fr: "Vide", icon: "\u{1F4ED}" },
@@ -100,7 +106,9 @@ function OrderFormInner() {
   const [errorMsg, setErrorMsg] = useState("");
   // October 1 PAD changeover. 'required' only for stores still on COD with no
   // active mandate — a store that has signed never sees the notice.
-  const [padStatus, setPadStatus] = useState<PadStatus>("ok");
+  // After the cutover (app_config.pad_block_orders_from, midnight Eastern Oct 1)
+  // it returns 'blocked' and the form stops at PadBlockedView instead.
+  const [padStatus, setPadStatus] = useState<PadGate>("ok");
 
   function applyStoreToForm(result: StorePublicInfo) {
     setStore(result);
@@ -122,8 +130,11 @@ function OrderFormInner() {
       hasOpenOrder(result.id),
       getStorePadStatus(result.public_code),
     ]);
-    setPadStatus(pad);
-    setStep(open ? "duplicate_order" : "confirm");
+    const gate = pad as PadGate;
+    setPadStatus(gate);
+    // An open order still shows the duplicate view: it is the more useful answer
+    // for a customer checking on an order already in progress.
+    setStep(open ? "duplicate_order" : gate === "blocked" ? "pad_blocked" : "confirm");
   }
 
   useEffect(() => {
@@ -253,6 +264,11 @@ function OrderFormInner() {
       // another device between resolving the store and submitting). Show the
       // same friendly duplicate view rather than a raw error.
       setStep("duplicate_order");
+    } else if (String(result.error || "").includes("pad_required")) {
+      // The DB trigger rejected the order because the cutover passed while the
+      // page was open. Show the same block screen rather than a raw error.
+      setPadStatus("blocked");
+      setStep("pad_blocked");
     } else {
       setErrorMsg(result.error || "Submission failed. Please try again.");
       setStep("error");
@@ -339,6 +355,10 @@ function OrderFormInner() {
 
   if (step === "duplicate_order") {
     return <DuplicateOrderView store={store!} />;
+  }
+
+  if (step === "pad_blocked") {
+    return <PadBlockedView store={store!} onNotMyStore={handleNotMyStore} />;
   }
 
   if (step === "confirm") {
@@ -551,8 +571,18 @@ function PadNotice({ storeCode }: { storeCode: string }) {
 
       {state === "sent" ? (
         <p className="text-sm text-green-800 bg-green-50 border border-green-200 rounded-lg p-3 mt-4">
-          Sent. Check {sentTo ? <strong>{sentTo}</strong> : "the email on your account"} for
-          your signing link. It may take a minute to arrive.
+          {sentTo ? (
+            <>
+              Sent. Check <strong>{sentTo}</strong> for your signing link. It may take a
+              minute to arrive.
+            </>
+          ) : (
+            <>
+              If your account is set up for online signing, the link is on its way to the
+              email on your account. If nothing arrives within a few minutes, please call
+              403-537-1045.
+            </>
+          )}
         </p>
       ) : (
         <>
@@ -585,9 +615,114 @@ function PadNotice({ storeCode }: { storeCode: string }) {
   );
 }
 
+// Shown after the October 1 cutover to a store still on COD with no active
+// mandate. Online ordering stops here; the DB trigger enforces the same rule.
+// Phone orders are not blocked, so the office line is always offered.
+function PadBlockedView({
+  store,
+  onNotMyStore,
+}: {
+  store: StorePublicInfo;
+  onNotMyStore: () => void;
+}) {
+  const [state, setState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
+  const [sentTo, setSentTo] = useState<string | null>(null);
+
+  async function handleSend() {
+    setState("sending");
+    const r = await requestPadLink(store.public_code);
+    if (r.ok) {
+      setSentTo(r.sentTo ?? null);
+      setState("sent");
+    } else {
+      setState("failed");
+    }
+  }
+
+  return (
+    <div className="max-w-md mx-auto px-4">
+      <Brand />
+      <div className="bg-white rounded-2xl shadow-sm p-6 mt-4">
+        <div className="bg-gradient-to-br from-pink-50 to-teal-50 border border-gray-100 rounded-xl p-4 mb-5">
+          <div className="text-xs text-gray-500 font-mono font-bold mb-1">{store.public_code}</div>
+          <div className="font-bold text-gray-900 text-lg leading-tight">{store.name}</div>
+        </div>
+
+        <h1 className="text-xl font-bold text-gray-900 mb-3">
+          Sign your pre-authorized debit agreement to order
+        </h1>
+        <p className="text-sm text-gray-700 leading-relaxed">
+          As of <strong>October 1, 2026</strong>, all Mini Melts customers pay by
+          pre-authorized debit. We don&apos;t have a signed agreement for this store yet, so
+          online ordering is paused until it&apos;s in place. Signing takes about two minutes.
+        </p>
+
+        {state === "sent" ? (
+          <p className="text-sm text-green-800 bg-green-50 border border-green-200 rounded-lg p-3 mt-4">
+            {sentTo ? (
+              <>
+                Sent. Check <strong>{sentTo}</strong> for your signing link. Once you&apos;ve
+                signed, come back to this page to place your order.
+              </>
+            ) : (
+              <>
+                If your account is set up for online signing, the link is on its way to the
+                email on your account. If nothing arrives within a few minutes, please call
+                403-537-1045.
+              </>
+            )}
+          </p>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={state === "sending"}
+              className="w-full mt-5 bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-60 transition"
+            >
+              {state === "sending" ? "Sending\u2026" : "Email me the sign-up link"}
+            </button>
+            {state === "failed" && (
+              <p className="text-sm text-red-700 mt-2">
+                Could not send just now. Please call the office at 403-537-1045.
+              </p>
+            )}
+          </>
+        )}
+
+        <p className="text-sm text-gray-700 leading-relaxed mt-5">
+          Can&apos;t use pre-authorized debit, or need an order right away? Call{" "}
+          <a href="tel:4035371045" className="underline font-semibold">403-537-1045</a> or email{" "}
+          <a href="mailto:billing@minimelts.ca" className="underline font-semibold">
+            billing@minimelts.ca
+          </a>
+          .
+        </p>
+
+        <p className="text-xs text-gray-500 leading-relaxed mt-4 pt-4 border-t border-gray-100">
+          Depuis le 1<sup>er</sup> octobre 2026, tous les clients de Mini Melts paient par
+          d&eacute;bit pr&eacute;autoris&eacute;. Nous n&apos;avons pas encore d&apos;entente
+          sign&eacute;e pour ce magasin; les commandes en ligne sont donc suspendues jusqu&apos;&agrave;
+          sa signature. Utilisez le bouton ci-dessus pour recevoir le lien, ou communiquez avec
+          notre bureau au 403-537-1045 ou &agrave; billing@minimelts.ca.
+        </p>
+
+        <button
+          type="button"
+          onClick={onNotMyStore}
+          className="w-full mt-5 text-sm font-semibold text-gray-500 hover:text-gray-700 hover:underline"
+        >
+          No, this isn&apos;t my store / Ce n&apos;est pas mon magasin
+        </button>
+      </div>
+      <Footer />
+    </div>
+  );
+}
+
 type ConfirmViewProps = {
   store: StorePublicInfo;
-  padStatus: PadStatus;
+  padStatus: PadGate;
   contactName: string;
   contactPhone: string;
   contactEmail: string;
