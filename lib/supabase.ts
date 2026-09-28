@@ -118,7 +118,10 @@ export async function hasOpenOrder(storeId: string): Promise<boolean> {
 //
 // Fails OPEN (returns 'ok'): a transient RPC error must never show a customer a
 // payment warning we are not sure applies to them.
-export type PadStatus = "ok" | "required";
+// 'blocked' is returned once app_config.pad_block_orders_from has passed
+// (midnight Eastern, Oct 1): the form stops at the block screen instead of
+// showing the warning banner. The DB trigger enforces the same rule on insert.
+export type PadStatus = "ok" | "required" | "blocked";
 
 export async function getStorePadStatus(code: string): Promise<PadStatus> {
   const normalized = code.trim().toUpperCase();
@@ -128,7 +131,7 @@ export async function getStorePadStatus(code: string): Promise<PadStatus> {
     console.error("PAD status error:", error);
     return "ok";
   }
-  return data === "required" ? "required" : "ok";
+  return data === "required" || data === "blocked" ? data : "ok";
 }
 
 // Asks the server to email this store its signing link.
