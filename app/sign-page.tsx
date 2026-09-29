@@ -142,6 +142,13 @@ const T: Record<string, Record<string, string>> = {
     voidRemove: "Remove",
     voidTooBig: "That file is too large. Please attach a photo or a PDF under 4 MB.",
     voidFailed: "We couldn\u2019t read that file. Try a photo instead.",
+    // Required mode (get-signing-session void_required, from Oct 1 2026).
+    voidHeadingReq: "Banking document (required)",
+    voidNoteReq: "Attach a VOID cheque, a bank account confirmation letter or a direct deposit form. A photo or PDF is fine. We check your details against it before the first payment, so a mistyped digit is caught by us rather than by a rejected debit. Stored securely, never emailed, and deleted once checked.",
+    voidNeeded: "Attach a banking document to continue.",
+    errVoidRequired: "A banking document is required. Please attach a VOID cheque, bank account confirmation letter or direct deposit form, then sign again.",
+    errVoidTooBig: "That file is too large. Please attach a photo or a PDF under 4 MB.",
+    errVoidUpload: "We couldn\u2019t save your banking document. Please try again, or attach a photo instead.",
   },
   fr: {
     title: "Consultez et signez votre entente de congélateur",
@@ -208,6 +215,12 @@ const T: Record<string, Record<string, string>> = {
     voidRemove: "Retirer",
     voidTooBig: "Ce fichier est trop volumineux. Veuillez joindre une photo ou un PDF de moins de 4 Mo.",
     voidFailed: "Nous n\u2019avons pas pu lire ce fichier. Essayez plut\u00f4t une photo.",
+    voidHeadingReq: "Document bancaire (obligatoire)",
+    voidNoteReq: "Joignez un ch\u00e8que ANNUL\u00c9, une lettre de confirmation de compte bancaire ou un formulaire de d\u00e9p\u00f4t direct. Une photo ou un PDF convient. Nous v\u00e9rifions vos renseignements avant le premier paiement \u2014 un chiffre mal saisi est ainsi d\u00e9tect\u00e9 par nous plut\u00f4t que par un d\u00e9bit refus\u00e9. Conserv\u00e9 de fa\u00e7on s\u00e9curitaire, jamais envoy\u00e9 par courriel, et supprim\u00e9 apr\u00e8s v\u00e9rification.",
+    voidNeeded: "Joignez un document bancaire pour continuer.",
+    errVoidRequired: "Un document bancaire est obligatoire. Veuillez joindre un ch\u00e8que ANNUL\u00c9, une lettre de confirmation de compte bancaire ou un formulaire de d\u00e9p\u00f4t direct, puis signer de nouveau.",
+    errVoidTooBig: "Ce fichier est trop volumineux. Veuillez joindre une photo ou un PDF de moins de 4 Mo.",
+    errVoidUpload: "Nous n\u2019avons pas pu enregistrer votre document bancaire. Veuillez r\u00e9essayer ou joindre plut\u00f4t une photo.",
   },
 };
 
@@ -416,6 +429,9 @@ export default function SignPage({ token }: { token: string }) {
     setGlobalErr("");
     const toSign = agreements.filter((a) => !signedSet.has(a.program));
     let anyFail = false;
+    // A specific, fixable reason from submit-pad-mandate (the banking document)
+    // replaces the generic error so the customer knows what to do.
+    let failMsg = "";
     for (const a of toSign) {
       try {
         let res: Response;
@@ -478,13 +494,17 @@ export default function SignPage({ token }: { token: string }) {
           return;
         } else {
           anyFail = true;
+          const code = data && data.error;
+          if (code === "void_cheque_required") failMsg = t.errVoidRequired;
+          else if (code === "void_cheque_too_large") failMsg = t.errVoidTooBig;
+          else if (code === "void_upload_failed") failMsg = t.errVoidUpload;
         }
       } catch {
         anyFail = true;
       }
     }
     setBusy(false);
-    if (anyFail) setGlobalErr(t.errGeneric);
+    if (anyFail) setGlobalErr(failMsg || t.errGeneric);
   };
 
   return (
@@ -554,6 +574,7 @@ export default function SignPage({ token }: { token: string }) {
               defaults={{ name: r.contact_name || "", title: r.applicant_title || "", legalName: r.legal_name || "" }}
               locations={locations}
               instMap={institutionMap}
+              voidRequired={session?.void_required === true}
               onSign={signAll}
             />
           )}
@@ -572,7 +593,7 @@ function Row({ k, v }: { k: string; v: string }) {
   );
 }
 
-function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locations, instMap, onSign }: any) {
+function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locations, instMap, voidRequired, onSign }: any) {
   const [name, setName] = useState(defaults.name || "");
   const [title, setTitle] = useState(defaults.title || "");
   const [read, setRead] = useState(false);
@@ -654,7 +675,10 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locatio
   // An unrecognized institution must be explicitly confirmed. Recognized
   // numbers -- the overwhelming majority -- are unaffected.
   const fiOk = !fiUnknown || fiConfirmed;
-  const padOk = !hasPad || (bankOk && authorized && authority && locOk && fiOk);
+  // From Oct 1 2026 (get-signing-session void_required) a banking document is
+  // required; submit-pad-mandate enforces the same rule server-side.
+  const voidOk = !voidRequired || !!voidImg;
+  const padOk = !hasPad || (bankOk && authorized && authority && locOk && fiOk && voidOk);
   // The minimum-purchase ack is only required when it is rendered (lead
   // sessions). Store PAD conversions never see it, so requiring it would
   // leave the button permanently disabled.
@@ -759,8 +783,8 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locatio
           </label>
 
           <div className="mm-void">
-            <div className="mm-bank-title">{t.voidHeading}</div>
-            <div className="mm-muted" style={{ marginTop: 0, marginBottom: 10 }}>{t.voidNote}</div>
+            <div className="mm-bank-title">{voidRequired ? t.voidHeadingReq : t.voidHeading}</div>
+            <div className="mm-muted" style={{ marginTop: 0, marginBottom: 10 }}>{voidRequired ? t.voidNoteReq : t.voidNote}</div>
             {voidImg ? (
               <div className="mm-void-has">
                 <span>{t.voidAttached}: {voidName}</span>
@@ -784,6 +808,9 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locatio
               </label>
             )}
             {voidErr ? <div className="mm-err">{voidErr}</div> : null}
+            {voidRequired && !voidImg && !voidErr && bankOk ? (
+              <div className="mm-muted" style={{ marginTop: 8 }}>{t.voidNeeded}</div>
+            ) : null}
           </div>
         </div>
       )}
