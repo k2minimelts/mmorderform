@@ -149,6 +149,19 @@ const T: Record<string, Record<string, string>> = {
     errVoidRequired: "A banking document is required. Please attach a VOID cheque, bank account confirmation letter or direct deposit form, then sign again.",
     errVoidTooBig: "That file is too large. Please attach a photo or a PDF under 4 MB.",
     errVoidUpload: "We couldn\u2019t save your banking document. Please try again, or attach a photo instead.",
+    // "What's left" checklist under the Sign button (Oct 2026): the button used
+    // to grey out with no hint of why.
+    todoTitle: "To finish, please:",
+    todoName: "Type your full name",
+    todoRead: "Confirm you have read the agreement",
+    todoMinimum: "Acknowledge the minimum purchase",
+    todoSig: "Draw your signature",
+    todoBank: "Enter your transit (5 digits), institution (3 digits) and account numbers",
+    todoFi: "Confirm your financial institution",
+    todoAuthorized: "Tick the box authorizing the pre-authorized debits",
+    todoAuthority: "Tick the box confirming you can authorize this account",
+    todoLoc: "Choose at least one location",
+    todoVoid: "Attach your VOID cheque, bank letter or direct deposit form",
   },
   fr: {
     title: "Consultez et signez votre entente de congélateur",
@@ -221,6 +234,17 @@ const T: Record<string, Record<string, string>> = {
     errVoidRequired: "Un document bancaire est obligatoire. Veuillez joindre un ch\u00e8que ANNUL\u00c9, une lettre de confirmation de compte bancaire ou un formulaire de d\u00e9p\u00f4t direct, puis signer de nouveau.",
     errVoidTooBig: "Ce fichier est trop volumineux. Veuillez joindre une photo ou un PDF de moins de 4 Mo.",
     errVoidUpload: "Nous n\u2019avons pas pu enregistrer votre document bancaire. Veuillez r\u00e9essayer ou joindre plut\u00f4t une photo.",
+    todoTitle: "Pour terminer, veuillez :",
+    todoName: "Inscrire votre nom complet",
+    todoRead: "Confirmer avoir lu l\u2019entente",
+    todoMinimum: "Reconna\u00eetre l\u2019achat minimum",
+    todoSig: "Dessiner votre signature",
+    todoBank: "Inscrire vos num\u00e9ros de transit (5 chiffres), d\u2019institution (3 chiffres) et de compte",
+    todoFi: "Confirmer votre institution financi\u00e8re",
+    todoAuthorized: "Cocher la case autorisant les d\u00e9bits pr\u00e9autoris\u00e9s",
+    todoAuthority: "Cocher la case confirmant que vous pouvez autoriser ce compte",
+    todoLoc: "Choisir au moins un emplacement",
+    todoVoid: "Joindre votre ch\u00e8que ANNUL\u00c9, lettre bancaire ou formulaire de d\u00e9p\u00f4t direct",
   },
 };
 
@@ -843,6 +867,32 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locatio
       </div>
 
       {err ? <div className="mm-err">{err}</div> : null}
+
+      {/* What's still missing before the button turns on. Mirrors canSign
+          exactly; shrinks as each item is done and disappears when complete. */}
+      {(() => {
+        if (busy) return null;
+        const todo: string[] = [];
+        if (!name.trim()) todo.push(t.todoName);
+        if (!read) todo.push(t.todoRead);
+        if (isLead && !minimum) todo.push(t.todoMinimum);
+        if (hasPad) {
+          if (!bankOk) todo.push(t.todoBank);
+          else if (!fiOk) todo.push(t.todoFi);
+          if (!locOk) todo.push(t.todoLoc);
+          if (!authorized) todo.push(t.todoAuthorized);
+          if (!authority) todo.push(t.todoAuthority);
+          if (!voidOk) todo.push(t.todoVoid);
+        }
+        if (!sig) todo.push(t.todoSig);
+        if (todo.length === 0) return null;
+        return (
+          <div className="mm-muted" style={{ margin: "4px 0 10px", textAlign: "left" }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>{t.todoTitle}</div>
+            {todo.map((x) => (<div key={x}>{"\u2610"} {x}</div>))}
+          </div>
+        );
+      })()}
 
       <button
         className="mm-btn"
