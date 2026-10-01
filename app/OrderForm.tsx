@@ -7,13 +7,15 @@ import {
   lookupStoresByEmail,
   submitOrder,
   hasOpenOrder,
-  enrollSorbetOwnFreezer,
   getStorePadStatus,
+  getStoreSorbetGate,
   requestPadLink,
   StorePublicInfo,
   StoreLookupResult,
   StockLevel,
   PadStatus,
+  SorbetGate,
+  SorbetFreezerAnswer,
 } from "@/lib/supabase";
 import {
   EmailLookupView,
@@ -81,7 +83,6 @@ function sorbetCasesOk(args: {
 // before it can order sorbet. The store code is appended so the application can
 // attach to the existing store.
 // TODO(k2): point this at the real sorbet application flow once it's built.
-const SORBET_APPLICATION_URL = "https://orders.minimelts.ca/apply?program=sorbet";
 
 function OrderFormInner() {
   const searchParams = useSearchParams();
@@ -102,6 +103,10 @@ function OrderFormInner() {
   // to empty and we send null to the DB.
   const [includesSorbet, setIncludesSorbet] = useState<boolean>(false);
   const [sorbetCases, setSorbetCases] = useState<Record<string, number>>({});
+  // Sorbet freezer gate: 'ask' for a store's first-ever sorbet order.
+  const [sorbetGate, setSorbetGate] = useState<SorbetGate>("ok");
+  const [freezerAnswer, setFreezerAnswer] = useState<SorbetFreezerAnswer | null>(null);
+  const [ownFreezerConfirmed, setOwnFreezerConfirmed] = useState(false);
   const [notes, setNotes] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   // October 1 PAD changeover. 'required' only for stores still on COD with no
@@ -126,10 +131,14 @@ function OrderFormInner() {
     applyStoreToForm(result);
     // Run both checks together: neither blocks the order today, and doing them
     // in parallel keeps the step transition as fast as it was before.
-    const [open, pad] = await Promise.all([
+    const [open, pad, sGate] = await Promise.all([
       hasOpenOrder(result.id),
       getStorePadStatus(result.public_code),
+      getStoreSorbetGate(result.public_code),
     ]);
+    setSorbetGate(sGate);
+    setFreezerAnswer(null);
+    setOwnFreezerConfirmed(false);
     const gate = pad as PadGate;
     setPadStatus(gate);
     // An open order still shows the duplicate view: it is the more useful answer
@@ -227,11 +236,14 @@ function OrderFormInner() {
       })
     )
       return;
+    // First sorbet order: the freezer question must be answered (and the
+    // own-freezer disclaimer confirmed). The button is disabled on the same rule.
+    const needsFreezerAnswer = wantsSorbet && sorbetGate === "ask";
+    if (needsFreezerAnswer && (!freezerAnswer || (freezerAnswer === "own" && !ownFreezerConfirmed))) return;
     setStep("submitting");
-    // Sorbet is only allowed for stores enrolled in the sorbet program (they
-    // have the separate -18C freezer). Guard here so a non-enrolled store can
-    // never submit a sorbet order even if UI state drifts.
-    const sorbetOk = !!store.sorbet_enrolled && wantsSorbet;
+    // Sorbet is open to every store (Oct 2026). Where it is kept is handled by
+    // the freezer question above and the DB gate, not by enrolment.
+    const sorbetOk = wantsSorbet;
     // Only flavours actually asked for; a zero line is noise for the depot.
     const sorbetLines = sorbetOk
       ? SORBET_FLAVOURS.filter((f) => (sorbetCases[f] || 0) > 0).map((f) => ({
@@ -256,6 +268,7 @@ function OrderFormInner() {
       // Historical rows keep their stock level; new ones always send null.
       sorbet_stock_level: null,
       sorbet_lines: sorbetLines,
+      sorbet_freezer_answer: sorbetOk && needsFreezerAnswer ? freezerAnswer : null,
     });
     if (result.success) {
       setStep("done");
@@ -402,6 +415,11 @@ function OrderFormInner() {
         onBack={() => setStep("confirm")}
         onSubmit={handleSubmit}
         onSorbetEnrolled={() => setStore((s) => (s ? { ...s, sorbet_enrolled: true } : s))}
+        askFreezer={sorbetGate === "ask"}
+        freezerAnswer={freezerAnswer}
+        setFreezerAnswer={setFreezerAnswer}
+        ownFreezerConfirmed={ownFreezerConfirmed}
+        setOwnFreezerConfirmed={setOwnFreezerConfirmed}
       />
     );
   }
@@ -855,17 +873,24 @@ type StockViewProps = {
   onBack: () => void;
   onSubmit: () => void;
   onSorbetEnrolled: () => void;
+  askFreezer: boolean;
+  freezerAnswer: SorbetFreezerAnswer | null;
+  setFreezerAnswer: (a: SorbetFreezerAnswer) => void;
+  ownFreezerConfirmed: boolean;
+  setOwnFreezerConfirmed: (v: boolean) => void;
 };
 
 function StockView(props: StockViewProps) {
   const {
     stockLevel, setStockLevel,
-    sorbetEnrolled, sorbetOnly, storeCode,
+    sorbetOnly,
     includesSorbet, setIncludesSorbet,
     sorbetCases, setSorbetCases,
     minCases, freezerCases,
     notes, setNotes,
-    onBack, onSubmit, onSorbetEnrolled,
+    onBack, onSubmit,
+    askFreezer, freezerAnswer, setFreezerAnswer,
+    ownFreezerConfirmed, setOwnFreezerConfirmed,
   } = props;
 
   // Sorbet-only stores place an order with no ice cream on it.
@@ -880,25 +905,24 @@ function StockView(props: StockViewProps) {
   });
   // Normal stores: ice cream stock required, plus valid sorbet cases if added.
   // Sorbet-only stores: only the sorbet cases matter.
-  const canSubmit = orderHasIceCream
+  // First sorbet order: the freezer question must be answered too.
+  const freezerOk = !(wantsSorbet && askFreezer)
+    || (!!freezerAnswer && (freezerAnswer !== "own" || ownFreezerConfirmed));
+  const canSubmit = (orderHasIceCream
     ? !!stockLevel && (!includesSorbet || sorbetValid)
-    : sorbetValid;
+    : sorbetValid) && freezerOk;
+  const freezerQuestion = (wantsSorbet && askFreezer) ? (
+    <SorbetFreezerQuestion
+      answer={freezerAnswer}
+      setAnswer={setFreezerAnswer}
+      ownConfirmed={ownFreezerConfirmed}
+      setOwnConfirmed={setOwnFreezerConfirmed}
+    />
+  ) : null;
 
   const setCases = (flavour: string, n: number) =>
     setSorbetCases({ ...sorbetCases, [flavour]: Math.max(0, n) });
 
-  // Self-serve BYO sorbet (Option B): the store already has their own -18°C
-  // freezer, so enable sorbet instantly — no agreement, no Mini Melts freezer.
-  const [enrolling, setEnrolling] = useState(false);
-  const [enrollErr, setEnrollErr] = useState<string | null>(null);
-  const handleEnrollOwnFreezer = async () => {
-    setEnrolling(true);
-    setEnrollErr(null);
-    const res = await enrollSorbetOwnFreezer(storeCode);
-    setEnrolling(false);
-    if (res.ok) onSorbetEnrolled();
-    else setEnrollErr("Couldn't enable sorbet — please try again.");
-  };
 
   return (
     <div className="max-w-md mx-auto px-4">
@@ -952,6 +976,7 @@ function StockView(props: StockViewProps) {
         )}
 
         {/* Sorbet-only: per-flavour cases, no ice cream, no application. */}
+        {sorbetOnly && freezerQuestion}
         {sorbetOnly && (
           <SorbetCasePicker
             sorbetCases={sorbetCases}
@@ -965,7 +990,9 @@ function StockView(props: StockViewProps) {
         {/* Sorbet toggle + application: only for NORMAL stores. Sorbet-only
             stores already have their sorbet stock selector above and are
             already contracted, so none of this applies to them. */}
-        {!sorbetOnly && (sorbetEnrolled ? (
+        {/* Sorbet is open to every store (Oct 2026). A store's first sorbet
+            order also asks where the sorbet will be kept. */}
+        {!sorbetOnly && (
           <>
             <div className="border-t border-gray-200 pt-5 mb-5">
               <h2 className="text-base font-bold text-gray-900 mb-1">
@@ -1000,6 +1027,7 @@ function StockView(props: StockViewProps) {
               </div>
             </div>
 
+            {includesSorbet && freezerQuestion}
             {includesSorbet && (
               <div className="mb-5">
                 <h2 className="text-base font-bold text-gray-900 mb-1">
@@ -1019,46 +1047,7 @@ function StockView(props: StockViewProps) {
               </div>
             )}
           </>
-        ) : (
-          <div className="border-t border-gray-200 pt-5 mb-5">
-            <div className="rounded-xl border-2 border-pink-100 bg-pink-50/60 p-4">
-              <h2 className="text-base font-bold text-gray-900 mb-1">
-                {"\u{1F368}"} Interested in adding sorbet?
-              </h2>
-              <div className="text-sm text-gray-500 mb-2">
-                Vous aimeriez ajouter du sorbet?
-              </div>
-              <p className="text-sm text-gray-700 mb-1">
-                Mini Melts BIG Sorbet is stored in its own <strong>&minus;18&deg;C</strong> freezer &mdash; it can&apos;t go in your <strong>&minus;35&deg;C</strong> Mini Melts freezer, so it needs a separate freezer and a quick sign&#8209;up first.
-              </p>
-              <p className="text-xs text-gray-500 mb-3">
-                Le sorbet est conserv&eacute; dans son propre cong&eacute;lateur &agrave; &minus;18&nbsp;&deg;C &mdash; il ne peut pas aller dans votre cong&eacute;lateur Mini Melts &agrave; &minus;35&nbsp;&deg;C. Un cong&eacute;lateur s&eacute;par&eacute; et une inscription sont requis.
-              </p>
-              <a
-                href={`${SORBET_APPLICATION_URL}&store=${encodeURIComponent(storeCode)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-block bg-brand-pink text-white font-semibold px-4 py-2.5 rounded-lg hover:opacity-90 active:opacity-80 transition text-sm"
-              >
-                Apply for sorbet / Demander le sorbet &rarr;
-              </a>
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={handleEnrollOwnFreezer}
-                  disabled={enrolling}
-                  className="text-sm font-semibold text-brand-pink underline underline-offset-2 hover:opacity-80 disabled:opacity-50"
-                >
-                  {enrolling ? "Enabling… / Activation…" : "I already have my own −18°C freezer — enable sorbet / J'ai déjà mon propre congélateur à −18°C — activer le sorbet →"}
-                </button>
-                {enrollErr && <p className="text-xs text-red-500 mt-1">{enrollErr}</p>}
-              </div>
-              <p className="text-xs text-gray-400 mt-2">
-                You can still place your ice cream order below. / Vous pouvez tout de m&ecirc;me commander votre cr&egrave;me glac&eacute;e ci&#8209;dessous.
-              </p>
-            </div>
-          </div>
-        ))}
+        )}
 
         <div className="mb-2">
           <label className="block text-sm font-semibold text-gray-700 mb-1.5">
@@ -1111,6 +1100,82 @@ type SorbetCasePickerProps = {
 
 // Per-flavour case steppers. Sorbet ships as whole 24-pouch cases, so the store
 // states quantities outright rather than describing freezer fullness.
+// First-ever sorbet order: where will the sorbet be kept? Bilingual, with the
+// freezer-temperature disclaimer, and an explicit confirmation for stores using
+// their own freezer. The answer is stored on the order and the store; the DB
+// trigger flags "needs a sorbet freezer" orders as new freezer installs.
+const FREEZER_OPTIONS: { value: SorbetFreezerAnswer; en: string; fr: string }[] = [
+  { value: "ours", en: "I already have a Mini Melts sorbet freezer", fr: "J\u2019ai d\u00E9j\u00E0 un cong\u00E9lateur \u00E0 sorbet Mini Melts" },
+  { value: "needs_ours", en: "I need a sorbet freezer", fr: "J\u2019ai besoin d\u2019un cong\u00E9lateur \u00E0 sorbet" },
+  { value: "own", en: "I will sell sorbet in my own freezer (\u221218\u00B0C)", fr: "Je vendrai le sorbet dans mon propre cong\u00E9lateur (\u221218\u00A0\u00B0C)" },
+];
+
+function SorbetFreezerQuestion(props: {
+  answer: SorbetFreezerAnswer | null;
+  setAnswer: (a: SorbetFreezerAnswer) => void;
+  ownConfirmed: boolean;
+  setOwnConfirmed: (v: boolean) => void;
+}) {
+  const { answer, setAnswer, ownConfirmed, setOwnConfirmed } = props;
+  return (
+    <div className="mb-5 rounded-xl border-2 border-pink-200 bg-pink-50/60 p-4">
+      <h2 className="text-base font-bold text-gray-900 mb-1">
+        {"\u{1F368}"} Where will you keep your sorbet?
+      </h2>
+      <div className="text-sm text-gray-500 mb-3">O&ugrave; conserverez-vous votre sorbet?</div>
+      <div className="rounded-lg border border-red-300 bg-red-50 p-3 mb-3">
+        <p className="text-sm font-bold text-red-700">
+          {"\u26A0\uFE0F"} Sorbet cannot be sold in the Mini Melts ice cream freezer &mdash; the temperature is too cold.
+        </p>
+        <p className="text-xs text-red-600 mt-1">
+          Le sorbet ne peut pas &ecirc;tre vendu dans le cong&eacute;lateur &agrave; cr&egrave;me glac&eacute;e Mini Melts &mdash; la temp&eacute;rature est trop froide.
+        </p>
+      </div>
+      <div className="space-y-2">
+        {FREEZER_OPTIONS.map((opt) => {
+          const selected = answer === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => setAnswer(opt.value)}
+              className={
+                "w-full text-left rounded-xl p-3 border-2 transition " +
+                (selected ? "border-brand-pink bg-white" : "border-gray-200 bg-white hover:border-gray-300")
+              }
+            >
+              <span className={"inline-block w-4 h-4 rounded-full border-2 mr-2 align-middle " + (selected ? "border-brand-pink bg-brand-pink" : "border-gray-300")} />
+              <span className="font-semibold text-gray-900 text-sm align-middle">{opt.en}</span>
+              <div className="text-xs text-gray-500 ml-6">{opt.fr}</div>
+            </button>
+          );
+        })}
+      </div>
+      {answer === "needs_ours" && (
+        <p className="text-xs text-gray-600 mt-3">
+          We&apos;ll bring a sorbet freezer with your first sorbet delivery. / Nous apporterons un cong&eacute;lateur &agrave; sorbet avec votre premi&egrave;re livraison de sorbet.
+        </p>
+      )}
+      {answer === "own" && (
+        <label className="flex items-start gap-2 mt-3 text-sm text-gray-800 cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-1"
+            checked={ownConfirmed}
+            onChange={(e) => setOwnConfirmed(e.target.checked)}
+          />
+          <span>
+            I confirm my freezer holds &minus;18&deg;C and is <strong>not</strong> the Mini Melts ice cream freezer.
+            <span className="block text-xs text-gray-500">
+              Je confirme que mon cong&eacute;lateur maintient &minus;18&nbsp;&deg;C et n&apos;est <strong>pas</strong> le cong&eacute;lateur &agrave; cr&egrave;me glac&eacute;e Mini Melts.
+            </span>
+          </span>
+        </label>
+      )}
+    </div>
+  );
+}
+
 function SorbetCasePicker(props: SorbetCasePickerProps) {
   const { sorbetCases, setCases, totalCases, minCases, freezerCases } = props;
   const belowMin = !!minCases && totalCases > 0 && totalCases < minCases;
