@@ -175,6 +175,24 @@ export async function enrollSorbetOwnFreezer(
   return { ok: false, error: d.error || "enroll_failed" };
 }
 
+// Sorbet freezer gate (Oct 2026). Sorbet is open to every store; the first time
+// a store orders it, it says where the sorbet will be kept. 'ask' = this store
+// has never answered (and never received sorbet), so the form must ask. Fails
+// open to 'ok': the DB trigger still treats an unanswered first order as
+// needing a freezer, so nothing is lost if this lookup errors.
+export type SorbetGate = "ask" | "ok";
+export type SorbetFreezerAnswer = "ours" | "needs_ours" | "own";
+
+export async function getStoreSorbetGate(code: string): Promise<SorbetGate> {
+  const { data, error } = await getSupabase()
+    .rpc("get_store_sorbet_gate", { p_code: code.trim().toUpperCase() });
+  if (error) {
+    console.error("Sorbet gate error:", error);
+    return "ok";
+  }
+  return data === "ask" ? "ask" : "ok";
+}
+
 export type SubmitOrderInput = {
   store_id: string;
   // null for sorbet-only stores (no ice cream); the DB column is nullable.
@@ -192,6 +210,8 @@ export type SubmitOrderInput = {
   includes_sorbet: boolean;
   sorbet_stock_level: SorbetStockLevel | null;
   sorbet_lines: SorbetLine[] | null;
+  // First sorbet order only (see getStoreSorbetGate); null otherwise.
+  sorbet_freezer_answer?: SorbetFreezerAnswer | null;
 };
 
 export type SubmitOrderResult =
@@ -215,6 +235,7 @@ export async function submitOrder(input: SubmitOrderInput): Promise<SubmitOrderR
         includes_sorbet: input.includes_sorbet,
         sorbet_stock_level: input.sorbet_stock_level,
         sorbet_lines: input.sorbet_lines,
+        sorbet_freezer_answer: input.sorbet_freezer_answer ?? null,
       });
 
     if (error) {
