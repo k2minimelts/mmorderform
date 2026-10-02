@@ -159,9 +159,9 @@ const T: Record<string, Record<string, string>> = {
     todoBank: "Enter your transit (5 digits), institution (3 digits) and account numbers",
     // ATB Financial (institution 219): cheque/EFT transit is 0 + 3-digit transit
     // + 9, and accounts are 11 digits (9 shown online, without the leading 00).
-    atbTransitAuto: (v: string) => `ATB: we\u2019ll record your transit as ${v} (as printed on your cheques).`,
+    atbTransitAuto: "ATB: we\u2019ll record your transit as {v} (as printed on your cheques).",
     atbTransitBad: "For ATB, the 5-digit transit starts with 0 and ends with 9 (e.g. 01239). You can also enter the 3-digit transit from online banking.",
-    atbAccountAuto: (v: string) => `ATB: we\u2019ll record your account as ${v} (with the leading 00).`,
+    atbAccountAuto: "ATB: we\u2019ll record your account as {v} (with the leading 00).",
     atbAccountBad: "ATB account numbers have 11 digits (or 9 digits without the leading 00).",
     errAtb: "Those ATB banking numbers don\u2019t look right. Please check the transit and account number and try again.",
     todoFi: "Confirm your financial institution",
@@ -247,9 +247,9 @@ const T: Record<string, Record<string, string>> = {
     todoMinimum: "Reconna\u00eetre l\u2019achat minimum",
     todoSig: "Dessiner votre signature",
     todoBank: "Inscrire vos num\u00e9ros de transit (5 chiffres), d\u2019institution (3 chiffres) et de compte",
-    atbTransitAuto: (v: string) => `ATB : nous inscrirons votre transit comme ${v} (tel qu\u2019imprim\u00e9 sur vos ch\u00e8ques).`,
+    atbTransitAuto: "ATB : nous inscrirons votre transit comme {v} (tel qu\u2019imprim\u00e9 sur vos ch\u00e8ques).",
     atbTransitBad: "Pour ATB, le transit \u00e0 5 chiffres commence par 0 et se termine par 9 (p. ex. 01239). Vous pouvez aussi inscrire le transit \u00e0 3 chiffres des services bancaires en ligne.",
-    atbAccountAuto: (v: string) => `ATB : nous inscrirons votre compte comme ${v} (avec les 00 initiaux).`,
+    atbAccountAuto: "ATB : nous inscrirons votre compte comme {v} (avec les 00 initiaux).",
     atbAccountBad: "Les num\u00e9ros de compte ATB comptent 11 chiffres (ou 9 chiffres sans les 00 initiaux).",
     errAtb: "Ces renseignements bancaires ATB ne semblent pas valides. Veuillez v\u00e9rifier le transit et le num\u00e9ro de compte, puis r\u00e9essayer.",
     todoFi: "Confirmer votre institution financi\u00e8re",
@@ -787,7 +787,7 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locatio
             <label>{t.transit}</label>
             <input className="mm-input" inputMode="numeric" maxLength={5} value={transit}
               onChange={(e) => setTransit(e.target.value.replace(/\D/g, ""))} />
-            {isAtb && /^\d{3}$/.test(transit) ? <div className="mm-fi-ok">{t.atbTransitAuto(transitOut)}</div> : null}
+            {isAtb && /^\d{3}$/.test(transit) ? <div className="mm-fi-ok">{t.atbTransitAuto.replace("{v}", transitOut)}</div> : null}
             {isAtb && transit.length === 5 && !atbTransitOk ? <div className="mm-err">{t.atbTransitBad}</div> : null}
             {isAtb && transit.length === 4 ? <div className="mm-muted">{t.atbTransitBad}</div> : null}
           </div>
@@ -814,7 +814,7 @@ function SigningSection({ t, count, hasPad, isLead, busy, err, defaults, locatio
             <label>{t.account}</label>
             <input className="mm-input" inputMode="numeric" value={account}
               onChange={(e) => setAccount(e.target.value.replace(/\D/g, ""))} />
-            {isAtb && /^\d{9}$/.test(account) ? <div className="mm-fi-ok">{t.atbAccountAuto(accountOut)}</div> : null}
+            {isAtb && /^\d{9}$/.test(account) ? <div className="mm-fi-ok">{t.atbAccountAuto.replace("{v}", accountOut)}</div> : null}
             {isAtb && account.length >= 4 && !/^\d{9}$/.test(account) && !atbAccountOk ? <div className="mm-err">{t.atbAccountBad}</div> : null}
           </div>
           <div className="mm-field">
