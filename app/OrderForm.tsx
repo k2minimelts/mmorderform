@@ -78,6 +78,36 @@ function sorbetCasesOk(args: {
   return true;
 }
 
+// Email typo check (Oct 2026). Look-alike domains (gmai.com, gmail.con,
+// hotmail.co …) are registered by people who collect mistyped mail, so an order
+// confirmation or PAD signing link sent there reaches a stranger. Uses the same
+// email_typo_info() rules as the DB trigger on orders, so the two always agree.
+// Checked on Step 1, where the email field is, instead of failing at submit.
+// Fails OPEN (null) on any error: the DB trigger still blocks a typo on insert.
+type EmailIssue = { bad: string; suggestion: string | null };
+
+async function findEmailTypo(value: string): Promise<EmailIssue | null> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !key) return null;
+  const addrs = value.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+  for (const a of addrs) {
+    try {
+      const r = await fetch(`${url}/rest/v1/rpc/email_typo_info`, {
+        method: "POST",
+        headers: { apikey: key, "Content-Type": "application/json" },
+        body: JSON.stringify({ p_email: a }),
+      });
+      if (!r.ok) continue;
+      const j = (await r.json()) as { suggestion?: string | null } | null;
+      if (j && typeof j === "object") return { bad: a, suggestion: j.suggestion ?? null };
+    } catch {
+      /* fail open */
+    }
+  }
+  return null;
+}
+
 // Where non-enrolled stores are sent to sign up for sorbet. Sorbet needs its own
 // -18C freezer (the Mini Melts freezer runs at -35C), so a store must be enrolled
 // before it can order sorbet. The store code is appended so the application can
@@ -114,6 +144,8 @@ function OrderFormInner() {
   // After the cutover (app_config.pad_block_orders_from, midnight Eastern Oct 1)
   // it returns 'blocked' and the form stops at PadBlockedView instead.
   const [padStatus, setPadStatus] = useState<PadGate>("ok");
+  const [emailIssue, setEmailIssue] = useState<EmailIssue | null>(null);
+  const [checkingEmail, setCheckingEmail] = useState(false);
 
   function applyStoreToForm(result: StorePublicInfo) {
     setStore(result);
@@ -121,6 +153,36 @@ function OrderFormInner() {
     setContactName(name);
     setContactPhone(result.phone || "");
     setContactEmail(result.email || "");
+    setEmailIssue(null);
+  }
+
+  // Step 1 → Step 2: check the email for a typo'd domain before moving on.
+  async function handleConfirmContinue() {
+    setEmailIssue(null);
+    const v = contactEmail.trim();
+    if (v) {
+      setCheckingEmail(true);
+      const issue = await findEmailTypo(v);
+      setCheckingEmail(false);
+      if (issue) {
+        setEmailIssue(issue);
+        return;
+      }
+    }
+    setStep("stock");
+  }
+
+  // "Use …@gmail.com": swap just the mistyped address, keep any others.
+  function applyEmailSuggestion() {
+    if (!emailIssue || !emailIssue.suggestion) return;
+    const bad = emailIssue.bad.toLowerCase();
+    const sugg = emailIssue.suggestion;
+    const fixed = contactEmail
+      .split(/([,;\s]+)/)
+      .map((part) => (part.trim().toLowerCase() === bad ? sugg : part))
+      .join("");
+    setContactEmail(fixed);
+    setEmailIssue(null);
   }
 
   // After a store is resolved, send the customer to the confirm step UNLESS the
@@ -282,6 +344,13 @@ function OrderFormInner() {
       // page was open. Show the same block screen rather than a raw error.
       setPadStatus("blocked");
       setStep("pad_blocked");
+    } else if (String(result.error || "").includes("Please check the email address")) {
+      // The DB email-typo guard rejected the order (e.g. the Step 1 check
+      // couldn't run). Send them back to the email field with the fix offered,
+      // rather than a dead-end error page.
+      const issue = await findEmailTypo(contactEmail.trim());
+      setEmailIssue(issue ?? { bad: contactEmail.trim(), suggestion: null });
+      setStep("confirm");
     } else {
       setErrorMsg(result.error || "Submission failed. Please try again.");
       setStep("error");
@@ -298,6 +367,7 @@ function OrderFormInner() {
     setContactName("");
     setContactPhone("");
     setContactEmail("");
+    setEmailIssue(null);
     setCodeInput("");
     setErrorMsg("");
     setStep("lookup");
@@ -384,9 +454,15 @@ function OrderFormInner() {
         contactEmail={contactEmail}
         setContactName={setContactName}
         setContactPhone={setContactPhone}
-        setContactEmail={setContactEmail}
-        onNext={() => setStep("stock")}
+        setContactEmail={(v) => {
+          setContactEmail(v);
+          setEmailIssue(null);
+        }}
+        onNext={handleConfirmContinue}
         onNotMyStore={handleNotMyStore}
+        emailIssue={emailIssue}
+        checkingEmail={checkingEmail}
+        onUseSuggestion={applyEmailSuggestion}
       />
     );
   }
@@ -749,6 +825,9 @@ type ConfirmViewProps = {
   setContactEmail: (v: string) => void;
   onNext: () => void;
   onNotMyStore: () => void;
+  emailIssue: EmailIssue | null;
+  checkingEmail: boolean;
+  onUseSuggestion: () => void;
 };
 
 function ConfirmView(props: ConfirmViewProps) {
@@ -763,6 +842,9 @@ function ConfirmView(props: ConfirmViewProps) {
     setContactEmail,
     onNext,
     onNotMyStore,
+    emailIssue,
+    checkingEmail,
+    onUseSuggestion,
   } = props;
   const cityProv = [store.ship_city, store.province].filter(Boolean).join(", ");
   const canContinue = contactName.trim().length > 0 && (contactPhone.trim() !== "" || contactEmail.trim() !== "");
@@ -829,6 +911,38 @@ function ConfirmView(props: ConfirmViewProps) {
               className="w-full border-2 border-gray-200 rounded-lg px-3 py-3 focus:outline-none focus:border-brand-teal transition"
               placeholder="you@example.com"
             />
+            {emailIssue && (
+              <div className="mt-2 rounded-lg border border-red-300 bg-red-50 p-3">
+                <p className="text-sm font-semibold text-red-700">
+                  This email address looks mistyped:{" "}
+                  <span className="font-mono break-all">{emailIssue.bad}</span>
+                </p>
+                <p className="text-sm text-red-700 mt-1">
+                  {emailIssue.suggestion ? (
+                    <>
+                      Did you mean <strong className="break-all">{emailIssue.suggestion}</strong>?
+                    </>
+                  ) : (
+                    "Please check it and try again."
+                  )}
+                </p>
+                <p className="text-xs text-red-600 mt-1">
+                  Cette adresse courriel semble contenir une faute de frappe.{" "}
+                  {emailIssue.suggestion
+                    ? `Vouliez-vous dire ${emailIssue.suggestion} ?`
+                    : "Veuillez la vérifier."}
+                </p>
+                {emailIssue.suggestion && (
+                  <button
+                    type="button"
+                    onClick={onUseSuggestion}
+                    className="mt-2 w-full bg-white border-2 border-red-300 text-red-700 font-semibold text-sm rounded-lg py-2 hover:bg-red-100 transition break-all"
+                  >
+                    Use {emailIssue.suggestion} / Utiliser cette adresse
+                  </button>
+                )}
+              </div>
+            )}
           </div>
           <p className="text-xs text-gray-500">
             Phone or email &mdash; at least one is required so we can reach you. <br />
@@ -838,10 +952,10 @@ function ConfirmView(props: ConfirmViewProps) {
 
         <button
           onClick={onNext}
-          disabled={!canContinue}
+          disabled={!canContinue || checkingEmail}
           className="w-full mt-6 bg-brand-pink text-white font-semibold py-4 rounded-xl hover:opacity-90 active:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition"
         >
-          Continue / Continuer &rarr;
+          {checkingEmail ? "Checking… / Vérification…" : <>Continue / Continuer &rarr;</>}
         </button>
         <button
           type="button"
