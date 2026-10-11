@@ -7,10 +7,13 @@
 // Supabase edge function. Same self-contained styling approach as the
 // partner/contact form (inline <style> so it renders identically in an iframe).
 //
-// Language: ?lang=fr | ?lang=en (defaults en) + in-form toggle.
-//   French page should iframe …/refunds?lang=fr
+// Language: ?lang=fr | ?lang=en (defaults en) + small EN | FR toggle
+//   (matches the site header toggle). French page can iframe …/refunds?lang=fr
+//
+// Height: tells the Squarespace page its height (postMessage "mm-form-height")
+// so the iframe fits and the site footer shows below it.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const EDGE_FUNCTION_URL =
   "https://jheqxfkyxewofpnkbayc.supabase.co/functions/v1/submit-refund";
@@ -47,8 +50,7 @@ const COPY = {
     errAmount: "Please enter the refund amount.",
     errDetails: "Please describe what happened.",
     errGeneric:
-      "Something went wrong submitting your request. Please try again, or email info@minimelts.ca.",
-    switchTo: "Français",
+      "Something went wrong submitting your request. Please try again in a moment, or call us at (403) 537-1045.",
   },
   fr: {
     heading: "Demande de remboursement",
@@ -79,12 +81,19 @@ const COPY = {
     errAmount: "Veuillez entrer le montant du remboursement.",
     errDetails: "Veuillez décrire ce qui s'est passé.",
     errGeneric:
-      "Une erreur est survenue lors de l'envoi. Veuillez réessayer ou écrire à info@minimelts.ca.",
-    switchTo: "English",
+      "Une erreur est survenue lors de l'envoi. Veuillez réessayer dans un instant ou nous appeler au 403 537-1045.",
   },
 } as const;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function postToParent(msg: Record<string, unknown>) {
+  try {
+    if (window.parent && window.parent !== window) window.parent.postMessage(msg, "*");
+  } catch (_e) {
+    /* not embedded */
+  }
+}
 
 export default function RefundForm() {
   const [lang, setLang] = useState<Lang>("en");
@@ -98,6 +107,24 @@ export default function RefundForm() {
   const [honeypot, setHoneypot] = useState("");
   const [status, setStatus] = useState<"idle" | "sending" | "done">("idle");
   const [error, setError] = useState<string | null>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Tell the Squarespace page how tall the form is, whenever it changes.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const send = () =>
+      postToParent({ type: "mm-form-height", height: Math.ceil(el.getBoundingClientRect().height) });
+    send();
+    const ro = new ResizeObserver(send);
+    ro.observe(el);
+    window.addEventListener("load", send);
+    return () => { ro.disconnect(); window.removeEventListener("load", send); };
+  }, []);
+
+  useEffect(() => {
+    if (status === "done") postToParent({ type: "mm-form-done" });
+  }, [status]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -107,7 +134,8 @@ export default function RefundForm() {
 
   const t = COPY[lang];
 
-  async function handleSubmit() {
+  async function handleSubmit(e?: React.FormEvent) {
+    e?.preventDefault();
     setError(null);
     if (name.trim().length < 1) { setError(t.errName); return; }
     if (!EMAIL_RE.test(email.trim())) { setError(t.errEmail); return; }
@@ -142,53 +170,88 @@ export default function RefundForm() {
   }
 
   return (
-    <div className="mm-wrap">
+    <div className="mm-wrap" ref={wrapRef} lang={lang}>
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
+
+        /* Inside the Squarespace page: blend in, and let the mouse wheel scroll the page around it */
+        html, body {
+          margin: 0 !important; padding: 0 !important; background: transparent !important;
+          overscroll-behavior: auto !important; min-height: 0 !important;
+        }
+
         .mm-wrap {
-          --teal:#34b3c4; --teal-dark:#2a93a1; --pink:#ef5a9c; --pink-dark:#e23f88;
-          --ink:#3a4a52; --line:#d9dfe2; --muted:#9aa7ad;
-          font-family:"Poppins","Quicksand","Trebuchet MS",system-ui,sans-serif;
-          color:var(--ink); max-width:640px; margin:0 auto; padding:28px 20px 48px; box-sizing:border-box;
+          --cyan: #2bb8e6; --cyan-soft: #eaf8fd;
+          --pink: #f0729f; --pink-dark: #e0558a;
+          --ink: #1f2937; --muted: #6b7280; --line: #e5e7eb;
+          font-family: "Poppins", system-ui, -apple-system, "Segoe UI", sans-serif;
+          color: var(--ink); max-width: 620px; margin: 0 auto; padding: 8px 20px 24px;
+          box-sizing: border-box; -webkit-font-smoothing: antialiased;
         }
-        .mm-wrap * { box-sizing:border-box; }
-        .mm-topbar { display:flex; justify-content:flex-end; margin-bottom:8px; }
-        .mm-lang { background:none; border:none; cursor:pointer; color:var(--teal); font-weight:600;
-          font-size:14px; font-family:inherit; padding:6px 8px; border-radius:8px; text-decoration:underline; text-underline-offset:3px; }
-        .mm-lang:hover { color:var(--teal-dark); }
-        .mm-heading { color:var(--teal); font-size:30px; line-height:1.15; font-weight:700; margin:0 0 10px; }
-        .mm-intro { font-size:15px; line-height:1.55; color:var(--ink); margin:0 0 26px; }
-        .mm-row { display:flex; gap:16px; }
-        .mm-row .mm-field { flex:1; }
-        @media (max-width:480px){ .mm-row { flex-direction:column; gap:0; } }
-        .mm-field { margin-bottom:18px; }
-        .mm-label { display:block; color:var(--teal); font-size:15px; font-weight:600; margin-bottom:7px; }
-        .mm-label .mm-req { color:var(--muted); font-weight:400; font-size:13px; }
+        .mm-wrap * { box-sizing: border-box; }
+
+        /* EN | FR pill, same as the site header */
+        .mm-topbar { display: flex; justify-content: flex-end; margin-bottom: 6px; }
+        .mm-lang { display: inline-flex; border: 1.5px solid var(--cyan); border-radius: 999px; overflow: hidden; background: #fff; }
+        .mm-lang button {
+          appearance: none; border: 0; background: transparent; cursor: pointer; font-family: inherit;
+          font-size: 13px; font-weight: 600; letter-spacing: .05em; line-height: 1;
+          color: var(--cyan); padding: 6px 12px;
+        }
+        .mm-lang button + button { border-left: 1.5px solid var(--cyan); }
+        .mm-lang button:hover { background: var(--cyan-soft); }
+        .mm-lang button.is-active { background: var(--cyan); color: #fff; }
+
+        .mm-heading { color: var(--cyan); font-size: 34px; line-height: 1.15; font-weight: 700; margin: 0 0 10px; text-align: center; }
+        .mm-intro { font-size: 16px; line-height: 1.6; color: var(--ink); margin: 0 auto 28px; text-align: center; max-width: 520px; }
+
+        .mm-row { display: flex; gap: 16px; }
+        .mm-row .mm-field { flex: 1; min-width: 0; }
+        @media (max-width: 520px) {
+          .mm-row { flex-direction: column; gap: 0; }
+          .mm-heading { font-size: 28px; }
+        }
+
+        .mm-field { margin-bottom: 18px; }
+        .mm-label { display: block; color: var(--ink); font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+        .mm-label .mm-req { color: var(--muted); font-weight: 400; }
         .mm-input, .mm-textarea, .mm-select {
-          width:100%; border:1px solid var(--line); border-radius:4px; background:#fafbfb;
-          padding:12px 13px; font-size:15px; font-family:inherit; color:var(--ink); transition:border-color .15s, box-shadow .15s;
+          width: 100%; border: 1.5px solid var(--line); border-radius: 12px; background: #fff;
+          padding: 13px 14px; font-size: 16px; /* 16px stops iPhone zoom */
+          font-family: inherit; color: var(--ink); transition: border-color .15s, box-shadow .15s;
         }
+        .mm-select {
+          appearance: none; -webkit-appearance: none; cursor: pointer; padding-right: 40px;
+          background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%232bb8e6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 16px center;
+        }
+        .mm-input::placeholder { color: #9ca3af; }
+        .mm-input:hover, .mm-textarea:hover, .mm-select:hover { border-color: #cbd5e1; }
         .mm-input:focus, .mm-textarea:focus, .mm-select:focus {
-          outline:none; border-color:var(--teal); box-shadow:0 0 0 3px rgba(52,179,196,.15); background:#fff;
+          outline: none; border-color: var(--cyan); box-shadow: 0 0 0 4px rgba(43,184,230,.15);
         }
-        .mm-textarea { min-height:120px; resize:vertical; }
-        .mm-hint { font-size:12px; color:var(--muted); margin-top:5px; }
-        .mm-honeypot { position:absolute; left:-9999px; width:1px; height:1px; overflow:hidden; opacity:0; }
+        .mm-textarea { min-height: 140px; resize: vertical; line-height: 1.5; }
+        .mm-honeypot { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; opacity: 0; }
+
+        .mm-actions { text-align: center; margin-top: 8px; }
         .mm-btn {
-          appearance:none; border:none; cursor:pointer; background:var(--pink); color:#fff; font-family:inherit;
-          font-size:17px; font-weight:600; letter-spacing:.3px; padding:15px 42px; border-radius:999px; margin-top:6px;
-          box-shadow:0 6px 18px rgba(239,90,156,.32); transition:background .15s, transform .08s, box-shadow .15s;
+          appearance: none; border: none; cursor: pointer; background: var(--pink); color: #fff; font-family: inherit;
+          font-size: 16px; font-weight: 600; letter-spacing: .02em; padding: 15px 44px; border-radius: 999px;
+          box-shadow: 0 6px 18px rgba(240,114,159,.30); transition: background .15s, transform .08s, box-shadow .15s;
         }
-        .mm-btn:hover:not(:disabled){ background:var(--pink-dark); box-shadow:0 8px 22px rgba(239,90,156,.4); }
-        .mm-btn:active:not(:disabled){ transform:translateY(1px); }
-        .mm-btn:disabled { opacity:.65; cursor:default; }
-        .mm-error { background:#fdeef3; border:1px solid #f6c4d8; color:#b3245f; padding:12px 14px; border-radius:8px; font-size:14px; margin-bottom:18px; }
-        .mm-success { text-align:center; padding:44px 20px; }
-        .mm-success-badge { width:64px; height:64px; border-radius:50%; background:var(--teal); color:#fff;
-          display:inline-flex; align-items:center; justify-content:center; font-size:34px; margin-bottom:18px;
-          box-shadow:0 8px 20px rgba(52,179,196,.3); animation:mm-pop .35s ease; }
-        @keyframes mm-pop { from{transform:scale(.6);opacity:0} to{transform:scale(1);opacity:1} }
-        .mm-success-title { color:var(--teal); font-size:26px; font-weight:700; margin:0 0 10px; }
-        .mm-success-body { font-size:16px; line-height:1.55; color:var(--ink); margin:0; }
+        .mm-btn:hover:not(:disabled) { background: var(--pink-dark); box-shadow: 0 8px 22px rgba(240,114,159,.38); }
+        .mm-btn:active:not(:disabled) { transform: translateY(1px); }
+        .mm-btn:focus-visible { outline: 3px solid rgba(43,184,230,.5); outline-offset: 3px; }
+        .mm-btn:disabled { opacity: .65; cursor: default; }
+        @media (max-width: 520px) { .mm-btn { width: 100%; } }
+
+        .mm-error { background: #fdeef4; border: 1px solid #f7c6d8; color: #b4235c; padding: 12px 14px; border-radius: 12px; font-size: 14px; margin-bottom: 18px; }
+        .mm-success { text-align: center; padding: 36px 20px 28px; }
+        .mm-success-badge { width: 68px; height: 68px; border-radius: 50%; background: var(--cyan); color: #fff;
+          display: inline-flex; align-items: center; justify-content: center; font-size: 34px; margin-bottom: 18px;
+          box-shadow: 0 8px 20px rgba(43,184,230,.3); animation: mm-pop .35s ease; }
+        @keyframes mm-pop { from { transform: scale(.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .mm-success-title { color: var(--cyan); font-size: 30px; font-weight: 700; margin: 0 0 10px; }
+        .mm-success-body { font-size: 16px; line-height: 1.6; color: var(--ink); margin: 0; }
       `}</style>
 
       {status === "done" ? (
@@ -198,11 +261,12 @@ export default function RefundForm() {
           <p className="mm-success-body">{t.successBody}</p>
         </div>
       ) : (
-        <>
+        <form onSubmit={handleSubmit} noValidate>
           <div className="mm-topbar">
-            <button type="button" className="mm-lang" onClick={() => setLang(lang === "en" ? "fr" : "en")}>
-              {t.switchTo}
-            </button>
+            <div className="mm-lang" role="group" aria-label="Language / Langue">
+              <button type="button" className={lang === "en" ? "is-active" : ""} aria-pressed={lang === "en"} onClick={() => setLang("en")}>EN</button>
+              <button type="button" className={lang === "fr" ? "is-active" : ""} aria-pressed={lang === "fr"} onClick={() => setLang("fr")}>FR</button>
+            </div>
           </div>
 
           <h1 className="mm-heading">{t.heading}</h1>
@@ -262,10 +326,12 @@ export default function RefundForm() {
               autoComplete="off" value={honeypot} onChange={(e) => setHoneypot(e.target.value)} />
           </div>
 
-          <button type="button" className="mm-btn" onClick={handleSubmit} disabled={status === "sending"}>
-            {status === "sending" ? t.sending : t.send}
-          </button>
-        </>
+          <div className="mm-actions">
+            <button type="submit" className="mm-btn" disabled={status === "sending"}>
+              {status === "sending" ? t.sending : t.send}
+            </button>
+          </div>
+        </form>
       )}
     </div>
   );
