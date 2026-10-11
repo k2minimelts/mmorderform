@@ -29,7 +29,7 @@ const COPY = {
     lastName: "Last name",
     email: "Email",
     phone: "Phone",
-    optional: "optional",
+    required: "required",
     message: "Message",
     send: "Send message",
     sending: "Sending…",
@@ -38,6 +38,7 @@ const COPY = {
       "Your message has been received. Our team will get back to you shortly.",
     errName: "Please enter your first and last name.",
     errEmail: "Please enter a valid email address.",
+    errPhone: "Please enter a valid phone number.",
     errMessage: "Please enter a message.",
     errGeneric:
       "Something went wrong sending your message. Please try again in a moment, or call us at (403) 537-1045.",
@@ -50,7 +51,7 @@ const COPY = {
     lastName: "Nom",
     email: "Courriel",
     phone: "Téléphone",
-    optional: "facultatif",
+    required: "requis",
     message: "Message",
     send: "Envoyer",
     sending: "Envoi…",
@@ -59,6 +60,7 @@ const COPY = {
       "Votre message a bien été reçu. Notre équipe vous répondra sous peu.",
     errName: "Veuillez entrer votre prénom et votre nom.",
     errEmail: "Veuillez entrer une adresse courriel valide.",
+    errPhone: "Veuillez entrer un numéro de téléphone valide.",
     errMessage: "Veuillez entrer un message.",
     errGeneric:
       "Une erreur est survenue lors de l'envoi. Veuillez réessayer dans un instant ou nous appeler au 403 537-1045.",
@@ -122,6 +124,7 @@ export default function PartnerForm() {
 
     if (firstName.trim().length < 1 || lastName.trim().length < 1) return setError(t.errName);
     if (!EMAIL_RE.test(email.trim())) return setError(t.errEmail);
+    if (phone.replace(/\D/g, "").length < 10) return setError(t.errPhone);
     if (message.trim().length < 1) return setError(t.errMessage);
 
     setStatus("sending");
@@ -134,7 +137,7 @@ export default function PartnerForm() {
           last_name: lastName.trim(),
           name: `${firstName.trim()} ${lastName.trim()}`.trim(),
           email: email.trim(),
-          phone: phone.trim() || undefined,
+          phone: phone.trim(),
           message: message.trim(),
           company_website: honeypot, // honeypot
         }),
@@ -199,7 +202,7 @@ export default function PartnerForm() {
           display: block; color: var(--ink); font-size: 14px;
           font-weight: 600; margin-bottom: 6px;
         }
-        .mm-label .mm-opt { color: var(--muted); font-weight: 400; }
+        .mm-label .mm-req { color: var(--muted); font-weight: 400; }
         .mm-input, .mm-textarea {
           width: 100%; border: 1.5px solid var(--line); border-radius: 12px;
           background: #fff; padding: 13px 14px; font-size: 16px; /* 16px stops iPhone zoom */
@@ -266,7 +269,9 @@ export default function PartnerForm() {
 
           <div className="mm-row">
             <div className="mm-field">
-              <label className="mm-label" htmlFor="mm-first">{t.firstName}</label>
+              <label className="mm-label" htmlFor="mm-first">
+                {t.firstName} <span className="mm-req">({t.required})</span>
+              </label>
               <input
                 id="mm-first" className="mm-input" type="text" required
                 value={firstName} onChange={(e) => setFirstName(e.target.value)}
@@ -274,7 +279,9 @@ export default function PartnerForm() {
               />
             </div>
             <div className="mm-field">
-              <label className="mm-label" htmlFor="mm-last">{t.lastName}</label>
+              <label className="mm-label" htmlFor="mm-last">
+                {t.lastName} <span className="mm-req">({t.required})</span>
+              </label>
               <input
                 id="mm-last" className="mm-input" type="text" required
                 value={lastName} onChange={(e) => setLastName(e.target.value)}
@@ -285,7 +292,9 @@ export default function PartnerForm() {
 
           <div className="mm-row">
             <div className="mm-field">
-              <label className="mm-label" htmlFor="mm-email">{t.email}</label>
+              <label className="mm-label" htmlFor="mm-email">
+                {t.email} <span className="mm-req">({t.required})</span>
+              </label>
               <input
                 id="mm-email" className="mm-input" type="email" required
                 value={email} onChange={(e) => setEmail(e.target.value)}
@@ -294,10 +303,10 @@ export default function PartnerForm() {
             </div>
             <div className="mm-field">
               <label className="mm-label" htmlFor="mm-phone">
-                {t.phone} <span className="mm-opt">({t.optional})</span>
+                {t.phone} <span className="mm-req">({t.required})</span>
               </label>
               <input
-                id="mm-phone" className="mm-input" type="tel"
+                id="mm-phone" className="mm-input" type="tel" required
                 value={phone} onChange={(e) => setPhone(e.target.value)}
                 autoComplete="tel" maxLength={40}
               />
@@ -305,7 +314,9 @@ export default function PartnerForm() {
           </div>
 
           <div className="mm-field">
-            <label className="mm-label" htmlFor="mm-message">{t.message}</label>
+            <label className="mm-label" htmlFor="mm-message">
+                {t.message} <span className="mm-req">({t.required})</span>
+              </label>
             <textarea
               id="mm-message" className="mm-textarea" required
               value={message} onChange={(e) => setMessage(e.target.value)}
