@@ -160,7 +160,11 @@ export default function PartnerForm() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
 
-        html, body { margin: 0; padding: 0; background: transparent; }
+        /* Inside the contact page: blend in, and let the mouse wheel scroll the page around it */
+        html, body {
+          margin: 0 !important; padding: 0 !important; background: transparent !important;
+          overscroll-behavior: auto !important; min-height: 0 !important;
+        }
 
         .mm-wrap {
           --cyan: #2bb8e6;
